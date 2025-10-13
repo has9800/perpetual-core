@@ -24,7 +24,7 @@ print()
 
 BENCHMARK_CONFIG = {
     'model_name': 'TheBloke/Mistral-7B-Instruct-v0.2-GPTQ',  # Start with 8B for speed
-    'quantization': 'int8',
+    'quantization': 'gptq',
     'test_duration_seconds': 300,  # 5 minutes per test
     'conversation_lengths': [10, 50, 100],  # Test different conversation lengths
     'concurrent_requests': [1, 5, 10],  # Test different concurrency

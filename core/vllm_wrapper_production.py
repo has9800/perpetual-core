@@ -1,6 +1,6 @@
 """
 vLLM Wrapper with Infinite Memory - PRODUCTION VERSION
-Real vLLM integration (no stubs)
+Compatible with vLLM v0.10+
 """
 
 import asyncio
@@ -22,42 +22,28 @@ class GenerationRequest:
 
 
 def create_vllm_engine(model_name: str,
-                       quantization: str = "int8",
-                       gpu_memory_utilization: float = 0.9,
-                       max_model_len: int = 8192):
-    """
-    Create real vLLM engine
-
-    Args:
-        model_name: HuggingFace model (e.g., "meta-llama/Llama-3-70b-chat-hf")
-        quantization: "int8", "fp16", or None
-        gpu_memory_utilization: GPU memory fraction to use
-        max_model_len: Maximum sequence length
-
-    Returns:
-        vLLM LLMEngine instance
-    """
-    from vllm import LLMEngine, EngineArgs
+                       quantization: str = "gptq",
+                       gpu_memory_utilization: float = 0.6,
+                       max_model_len: int = 4096):
+    """Create real vLLM engine using high-level API"""
+    from vllm import LLM
 
     print(f"Loading vLLM engine: {model_name}")
     print(f"  Quantization: {quantization}")
     print(f"  Max length: {max_model_len}")
     print(f"  GPU memory: {gpu_memory_utilization * 100}%")
 
-    args = EngineArgs(
+    llm = LLM(
         model=model_name,
-        quantization=quantization,
+        quantization=quantization if quantization else None,
         gpu_memory_utilization=gpu_memory_utilization,
         max_model_len=max_model_len,
         trust_remote_code=True,
-        dtype="float16",
-        disable_log_stats=False
+        dtype="float16"
     )
 
-    engine = LLMEngine.from_engine_args(args)
-
     print("✅ vLLM engine loaded successfully")
-    return engine
+    return llm
 
 
 class InfiniteMemoryEngine:
@@ -68,12 +54,10 @@ class InfiniteMemoryEngine:
                  memory_manager,
                  max_context_tokens: int = 4096,
                  context_retrieval_k: int = 3):
-        """Initialize engine with memory"""
         self.engine = vllm_engine
         self.memory = memory_manager
         self.max_context_tokens = max_context_tokens
         self.context_retrieval_k = context_retrieval_k
-
         self.generation_count = 0
         self.total_tokens_generated = 0
         self.context_retrievals = 0
@@ -83,13 +67,11 @@ class InfiniteMemoryEngine:
         start_time = time.time()
 
         try:
-            # Get recent context
             recent_turns = self.memory.get_recent_turns(
                 request.conversation_id,
                 limit=5
             )
 
-            # Retrieve relevant context from vector DB
             query = request.messages[-1]['content'] if request.messages else ""
             context_result = self.memory.retrieve_context(
                 conversation_id=request.conversation_id,
@@ -100,21 +82,18 @@ class InfiniteMemoryEngine:
             retrieved_context = context_result.get('results', [])
             self.context_retrievals += 1
 
-            # Build prompt
             prompt = self._build_prompt(
                 messages=request.messages,
                 recent_turns=recent_turns,
                 retrieved_context=retrieved_context
             )
 
-            # Generate with vLLM
             response_text = await self._call_vllm(
                 prompt=prompt,
                 max_tokens=request.max_tokens,
                 temperature=request.temperature
             )
 
-            # Store exchange
             exchange_text = f"User: {query}\nAssistant: {response_text}"
             self.memory.add_turn(
                 conversation_id=request.conversation_id,
@@ -126,11 +105,9 @@ class InfiniteMemoryEngine:
                 }
             )
 
-            # Update metrics
             self.generation_count += 1
             tokens_generated = len(response_text.split())
             self.total_tokens_generated += tokens_generated
-
             latency = (time.time() - start_time) * 1000
 
             return {
@@ -146,6 +123,8 @@ class InfiniteMemoryEngine:
             }
 
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             return {
                 'success': False,
                 'error': str(e),
@@ -154,39 +133,27 @@ class InfiniteMemoryEngine:
 
     async def _call_vllm(self, prompt: str, max_tokens: int, 
                         temperature: float) -> str:
-        """Call real vLLM engine"""
+        """Call vLLM using high-level API"""
         from vllm import SamplingParams
 
-        # Create sampling parameters
         sampling_params = SamplingParams(
             max_tokens=max_tokens,
             temperature=temperature,
             top_p=0.95,
-            stop=["</s>", "User:", "<|eot_id|>"]
+            stop=["</s>", "User:", "<|eot_id|>", "\n\nUser:"]
         )
 
-        # Generate unique request ID
-        request_id = f"req_{int(time.time() * 1000000)}"
-
-        # Add request to engine
-        self.engine.add_request(
-            request_id=request_id,
-            prompt=prompt,
-            sampling_params=sampling_params
+        loop = asyncio.get_event_loop()
+        outputs = await loop.run_in_executor(
+            None,
+            self.engine.generate,
+            [prompt],
+            sampling_params
         )
 
-        # Process until complete
-        final_output = ""
-        while self.engine.has_unfinished_requests():
-            request_outputs = self.engine.step()
-
-            for output in request_outputs:
-                if output.request_id == request_id:
-                    if output.finished:
-                        final_output = output.outputs[0].text
-                        break
-
-        return final_output
+        if outputs and len(outputs) > 0:
+            return outputs[0].outputs[0].text
+        return ""
 
     def _build_prompt(self, 
                      messages: List[Dict],
@@ -195,21 +162,18 @@ class InfiniteMemoryEngine:
         """Build prompt with context"""
         prompt_parts = []
 
-        # Add retrieved context
         if retrieved_context:
             prompt_parts.append("# Relevant previous context:")
             for ctx in retrieved_context[:3]:
                 prompt_parts.append(f"- {ctx['text'][:200]}")
             prompt_parts.append("")
 
-        # Add recent turns
         if recent_turns:
             prompt_parts.append("# Recent conversation:")
             for turn in recent_turns[-3:]:
                 prompt_parts.append(turn)
             prompt_parts.append("")
 
-        # Add current messages
         prompt_parts.append("# Current query:")
         for msg in messages:
             role = msg['role'].capitalize()
@@ -217,13 +181,11 @@ class InfiniteMemoryEngine:
             prompt_parts.append(f"{role}: {content}")
 
         prompt_parts.append("\nAssistant:")
-
         return "\n".join(prompt_parts)
 
     def get_stats(self) -> Dict:
         """Get statistics"""
         memory_stats = self.memory.get_metrics()
-
         return {
             'engine_stats': {
                 'total_generations': self.generation_count,
