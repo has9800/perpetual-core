@@ -1,10 +1,11 @@
 """
 Memory Manager for Infinite Context
-FIXED: Proper turn storage, retrieval, and conversation ID consistency
+OPTIMIZED: Async operations for better throughput
 """
 
 from typing import List, Dict, Optional
 import time
+import asyncio
 from collections import OrderedDict
 
 
@@ -33,7 +34,10 @@ class MemoryManager:
             'retrievals': 0,
             'cache_hits': 0,
             'cache_misses': 0,
-            'evictions': 0
+            'evictions': 0,
+            'vector_db_writes': 0,
+            'vector_db_searches': 0,
+            'errors': {}
         }
 
     def add_turn(self,
@@ -41,7 +45,7 @@ class MemoryManager:
                 text: str,
                 metadata: Optional[Dict] = None) -> bool:
         """
-        Add conversation turn to memory
+        Add conversation turn to memory (synchronous version)
 
         Args:
             conversation_id: Unique conversation ID (stays same for all turns)
@@ -86,11 +90,77 @@ class MemoryManager:
 
                 self.stats['total_turns'] += 1
                 self.stats['snapshots_created'] += 1
+                self.stats['vector_db_writes'] += 1
 
             return success
 
         except Exception as e:
             print(f"Memory add error: {e}")
+            self.stats['errors']['add_turn'] = self.stats['errors'].get('add_turn', 0) + 1
+            return False
+
+    async def add_turn_async(self,
+                            conversation_id: str,
+                            text: str,
+                            metadata: Optional[Dict] = None) -> bool:
+        """
+        Add conversation turn to memory (async non-blocking version)
+        Use this for better throughput - doesn't block generation
+
+        Args:
+            conversation_id: Unique conversation ID
+            text: The user query
+            metadata: Additional data
+        """
+        try:
+            # Track turn number for this conversation
+            if conversation_id not in self.conversation_turns:
+                self.conversation_turns[conversation_id] = 0
+
+            self.conversation_turns[conversation_id] += 1
+            turn_number = self.conversation_turns[conversation_id]
+
+            # Build metadata
+            meta = metadata or {}
+            meta.update({
+                'conversation_id': conversation_id,
+                'turn_number': turn_number,
+                'timestamp': time.time()
+            })
+
+            # Add to cache immediately (fast)
+            cache_key = f"{conversation_id}_{turn_number}"
+            self.recent_cache[cache_key] = {
+                'text': text,
+                'metadata': meta
+            }
+
+            # Evict old entries from cache
+            if len(self.recent_cache) > self.cache_capacity:
+                self.recent_cache.popitem(last=False)
+                self.stats['evictions'] += 1
+
+            self.stats['total_turns'] += 1
+            self.stats['snapshots_created'] += 1
+
+            # Store in vector DB asynchronously (non-blocking)
+            loop = asyncio.get_event_loop()
+            success = await loop.run_in_executor(
+                None,
+                self.vector_db.add,
+                conversation_id,
+                text,
+                meta
+            )
+
+            if success:
+                self.stats['vector_db_writes'] += 1
+
+            return success
+
+        except Exception as e:
+            print(f"Memory add async error: {e}")
+            self.stats['errors']['add_turn_async'] = self.stats['errors'].get('add_turn_async', 0) + 1
             return False
 
     def retrieve_context(self,
@@ -98,7 +168,7 @@ class MemoryManager:
                         query: str,
                         top_k: int = 3) -> Dict:
         """
-        Retrieve relevant context from conversation history
+        Retrieve relevant context from conversation history (synchronous)
 
         Args:
             conversation_id: Conversation to search within
@@ -110,6 +180,7 @@ class MemoryManager:
         """
         try:
             self.stats['retrievals'] += 1
+            self.stats['vector_db_searches'] += 1
 
             # Query vector DB for similar past exchanges
             results = self.vector_db.query(
@@ -130,6 +201,48 @@ class MemoryManager:
 
         except Exception as e:
             print(f"Memory retrieval error: {e}")
+            self.stats['errors']['retrieve_context'] = self.stats['errors'].get('retrieve_context', 0) + 1
+            return {
+                'results': [],
+                'conversation_id': conversation_id,
+                'error': str(e)
+            }
+
+    async def retrieve_context_async(self,
+                                     conversation_id: str,
+                                     query: str,
+                                     top_k: int = 3) -> Dict:
+        """
+        Retrieve relevant context asynchronously (non-blocking)
+        Use this for better throughput
+        """
+        try:
+            self.stats['retrievals'] += 1
+            self.stats['vector_db_searches'] += 1
+
+            # Query vector DB asynchronously
+            loop = asyncio.get_event_loop()
+            results = await loop.run_in_executor(
+                None,
+                self.vector_db.query,
+                conversation_id,
+                query,
+                top_k
+            )
+
+            # Sort by similarity (highest first)
+            results = sorted(results, key=lambda x: x.get('similarity', 0), reverse=True)
+
+            return {
+                'results': results,
+                'conversation_id': conversation_id,
+                'query': query,
+                'retrieved_count': len(results)
+            }
+
+        except Exception as e:
+            print(f"Memory retrieval async error: {e}")
+            self.stats['errors']['retrieve_context_async'] = self.stats['errors'].get('retrieve_context_async', 0) + 1
             return {
                 'results': [],
                 'conversation_id': conversation_id,
@@ -139,7 +252,7 @@ class MemoryManager:
     def get_recent_turns(self,
                         conversation_id: str,
                         limit: int = 5) -> List[str]:
-        """Get N most recent turns from cache"""
+        """Get N most recent turns from cache (fast, no vector DB needed)"""
         try:
             # Get all turns for this conversation from cache
             conv_turns = [
@@ -172,6 +285,7 @@ class MemoryManager:
 
         except Exception as e:
             print(f"Recent turns error: {e}")
+            self.stats['errors']['get_recent_turns'] = self.stats['errors'].get('get_recent_turns', 0) + 1
             return []
 
     def get_conversation_length(self, conversation_id: str) -> int:
@@ -198,6 +312,7 @@ class MemoryManager:
 
         except Exception as e:
             print(f"Delete conversation error: {e}")
+            self.stats['errors']['delete_conversation'] = self.stats['errors'].get('delete_conversation', 0) + 1
 
     def get_metrics(self) -> Dict:
         """Get memory system metrics"""
@@ -207,6 +322,8 @@ class MemoryManager:
             'snapshots_created': self.stats['snapshots_created'],
             'evictions': self.stats['evictions'],
             'retrievals': self.stats['retrievals'],
+            'vector_db_writes': self.stats['vector_db_writes'],
+            'vector_db_searches': self.stats['vector_db_searches'],
             'cache_hits': self.stats['cache_hits'],
             'cache_misses': self.stats['cache_misses'],
             'cache_hit_rate': (
@@ -214,5 +331,6 @@ class MemoryManager:
                 if (self.stats['cache_hits'] + self.stats['cache_misses']) > 0 else 0
             ),
             'cache_size': len(self.recent_cache),
-            'cache_utilization': len(self.recent_cache) / self.cache_capacity
+            'cache_utilization': len(self.recent_cache) / self.cache_capacity,
+            'errors': self.stats['errors']
         }

@@ -1,6 +1,6 @@
 """
 vLLM Wrapper with Infinite Memory - PRODUCTION VERSION
-FIXED: Proper storage format, better retrieval, conversation ID consistency
+OPTIMIZED: Async vector DB operations for better throughput
 """
 
 import asyncio
@@ -23,7 +23,7 @@ class GenerationRequest:
 
 def create_vllm_engine(model_name: str,
                        quantization: str = "gptq",
-                       gpu_memory_utilization: float = 0.6,
+                       gpu_memory_utilization: float = 0.9,  # INCREASED from 0.6
                        max_model_len: int = 4096):
     """Create real vLLM engine using high-level API"""
     from vllm import LLM
@@ -53,11 +53,13 @@ class InfiniteMemoryEngine:
                  vllm_engine,
                  memory_manager,
                  max_context_tokens: int = 4096,
-                 context_retrieval_k: int = 3):
+                 context_retrieval_k: int = 3,
+                 async_memory: bool = True):  # NEW: Enable async by default
         self.engine = vllm_engine
         self.memory = memory_manager
         self.max_context_tokens = max_context_tokens
         self.context_retrieval_k = context_retrieval_k
+        self.async_memory = async_memory  # Use async memory operations
         self.generation_count = 0
         self.total_tokens_generated = 0
         self.context_retrievals = 0
@@ -78,18 +80,25 @@ class InfiniteMemoryEngine:
             if not user_query:
                 user_query = "continue"
 
-            # Get recent turns (last 3 exchanges)
+            # Get recent turns (fast - from cache)
             recent_turns = self.memory.get_recent_turns(
                 request.conversation_id,
                 limit=3
             )
 
-            # Retrieve relevant context from past (top 3 similar exchanges)
-            context_result = self.memory.retrieve_context(
-                conversation_id=request.conversation_id,
-                query=user_query,
-                top_k=self.context_retrieval_k
-            )
+            # Retrieve relevant context (async if enabled)
+            if self.async_memory:
+                context_result = await self.memory.retrieve_context_async(
+                    conversation_id=request.conversation_id,
+                    query=user_query,
+                    top_k=self.context_retrieval_k
+                )
+            else:
+                context_result = self.memory.retrieve_context(
+                    conversation_id=request.conversation_id,
+                    query=user_query,
+                    top_k=self.context_retrieval_k
+                )
 
             retrieved_context = context_result.get('results', [])
             self.context_retrievals += 1
@@ -109,17 +118,33 @@ class InfiniteMemoryEngine:
                 temperature=request.temperature
             )
 
-            # Store in memory: text=user_query, metadata includes response
-            self.memory.add_turn(
-                conversation_id=request.conversation_id,
-                text=user_query,  # Store query (searchable)
-                metadata={
-                    'response': response_text,  # Store response in metadata
-                    'user_id': request.user_id,
-                    'model': request.model,
-                    'timestamp': time.time()
-                }
-            )
+            # Store in memory (async if enabled - non-blocking)
+            if self.async_memory:
+                # Fire and forget - doesn't block response
+                asyncio.create_task(
+                    self.memory.add_turn_async(
+                        conversation_id=request.conversation_id,
+                        text=user_query,
+                        metadata={
+                            'response': response_text,
+                            'user_id': request.user_id,
+                            'model': request.model,
+                            'timestamp': time.time()
+                        }
+                    )
+                )
+            else:
+                # Synchronous - blocks until complete
+                self.memory.add_turn(
+                    conversation_id=request.conversation_id,
+                    text=user_query,
+                    metadata={
+                        'response': response_text,
+                        'user_id': request.user_id,
+                        'model': request.model,
+                        'timestamp': time.time()
+                    }
+                )
 
             # Update metrics
             self.generation_count += 1
@@ -135,7 +160,8 @@ class InfiniteMemoryEngine:
                     'tokens_generated': tokens_generated,
                     'context_retrieved': len(retrieved_context),
                     'recent_turns_used': len(recent_turns),
-                    'conversation_turn': self.memory.get_conversation_length(request.conversation_id)
+                    'conversation_turn': self.memory.get_conversation_length(request.conversation_id),
+                    'async_memory': self.async_memory
                 },
                 'success': True
             }
@@ -224,7 +250,8 @@ class InfiniteMemoryEngine:
                 'avg_tokens_per_generation': (
                     self.total_tokens_generated / self.generation_count
                     if self.generation_count > 0 else 0
-                )
+                ),
+                'async_memory_enabled': self.async_memory
             },
             'memory_stats': memory_stats
         }

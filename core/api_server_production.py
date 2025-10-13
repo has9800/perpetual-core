@@ -1,7 +1,6 @@
 """
 Infinite Memory Inference API - PRODUCTION VERSION
-Ready for deployment with real vLLM + ChromaDB
-HARDCODED DEFAULTS - NO .env FILE NEEDED
+OPTIMIZED: 90% GPU utilization, async operations
 """
 
 from fastapi import FastAPI, HTTPException, Header
@@ -229,23 +228,23 @@ class InferenceAPI:
 
 
 def create_app():
-    """Create production app with HARDCODED DEFAULTS"""
+    """Create production app with OPTIMIZED DEFAULTS"""
     from vector_db_adapters import create_vector_db
     from memory_manager import MemoryManager
     from vllm_wrapper_production import InfiniteMemoryEngine, create_vllm_engine
 
-    # HARDCODED DEFAULTS - CORRECT VALUES
-    model_name = os.getenv("MODEL_NAME", "TheBloke/Mistral-7B-Instruct-v0.2-GPTQ")
+    # OPTIMIZED DEFAULTS FOR THROUGHPUT
+    model_name = os.getenv("MODEL_NAME", "TheBloke/Llama-2-7B-Chat-GPTQ")
     quantization = os.getenv("MODEL_QUANTIZATION", "gptq")
-    gpu_memory = float(os.getenv("GPU_MEMORY_UTILIZATION", "0.85"))
-    max_model_len = int(os.getenv("MAX_MODEL_LEN", "8192"))
+    gpu_memory = float(os.getenv("GPU_MEMORY_UTILIZATION", "0.9"))  # INCREASED
+    max_model_len = int(os.getenv("MAX_MODEL_LEN", "4096"))
     vector_db_backend = os.getenv("VECTOR_DB_BACKEND", "chromadb")
     cache_capacity = int(os.getenv("CACHE_CAPACITY", "1000"))
     api_keys_str = os.getenv("API_KEYS", "")
     api_keys = [k.strip() for k in api_keys_str.split(",") if k.strip()] if api_keys_str else None
 
     logger.info("="*80)
-    logger.info("Infinite Memory Inference API")
+    logger.info("Infinite Memory Inference API - OPTIMIZED")
     logger.info("="*80)
     logger.info(f"Model: {model_name}")
     logger.info(f"Quantization: {quantization}")
@@ -281,7 +280,8 @@ def create_app():
         vllm_engine=vllm_engine,
         memory_manager=memory_manager,
         max_context_tokens=int(os.getenv("MAX_CONTEXT_TOKENS", "4096")),
-        context_retrieval_k=int(os.getenv("CONTEXT_RETRIEVAL_K", "3"))
+        context_retrieval_k=int(os.getenv("CONTEXT_RETRIEVAL_K", "3")),
+        async_memory=True  # Enable async operations
     )
     logger.info("✅ Infinite memory engine ready")
 
@@ -294,7 +294,7 @@ def create_app():
     logger.info("✅ API server ready")
 
     logger.info("="*80)
-    logger.info("🚀 Infinite Memory Inference API Started")
+    logger.info("🚀 Infinite Memory Inference API Started (OPTIMIZED)")
     logger.info("="*80)
 
     return api.app
