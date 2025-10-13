@@ -235,12 +235,12 @@ Avg Similarity: 0.483 (good semantic understanding)
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                      FastAPI Server                          │
+│                      FastAPI Server                         │
 │  OpenAI-compatible /v1/chat/completions endpoint            │
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
-│              InfiniteMemoryEngine                            │
+│              InfiniteMemoryEngine                           │
 │  • Context retrieval (semantic search)                      │
 │  • Recent turns cache (fast access)                         │
 │  • Prompt building with retrieved context                   │
