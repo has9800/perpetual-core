@@ -1,6 +1,6 @@
 """
 GPU Benchmark Suite for Infinite Memory Inference API
-FIXED: Better error handling, debug output, handles empty results
+UPDATED: Realistic semantic retrieval testing
 """
 
 import asyncio
@@ -158,78 +158,176 @@ class MemoryEfficiencyBenchmark:
         return results
 
 
+
 class RetrievalAccuracyBenchmark:
-    """Benchmark retrieval accuracy"""
+    """Benchmark retrieval accuracy with REALISTIC semantic queries"""
 
     def __init__(self, engine, memory):
         self.engine = engine
         self.memory = memory
 
     async def run(self) -> Dict:
-        """Run retrieval accuracy benchmark"""
+        """Run retrieval accuracy benchmark with semantic understanding test"""
         print("\n" + "="*80)
-        print("BENCHMARK 3: RETRIEVAL ACCURACY")
-        print("Verify semantic search finds relevant past context")
+        print("BENCHMARK 3: RETRIEVAL ACCURACY (SEMANTIC UNDERSTANDING)")
+        print("Tests if system can find relevant context with different wording")
         print("="*80)
-        print("Testing retrieval accuracy...")
+        print("Testing semantic retrieval accuracy...")
 
         conv_id = "accuracy_test"
+
+        # REALISTIC TEST PAIRS: Store with one wording, query with different wording
+        # This tests actual semantic understanding, not just exact matching
         test_pairs = [
-            ("What is Python?", "Python is a programming language"),
-            ("Tell me about dogs", "Dogs are loyal pets"),
-            ("Explain machine learning", "ML is about training models"),
-            ("What is the weather", "Weather refers to atmospheric conditions"),
-            ("How to cook pasta", "Pasta is cooked in boiling water")
+            # (what user says initially, what they ask later, expected topic match)
+            {
+                "initial": "I'm allergic to peanuts and shellfish",
+                "query": "Do you remember my dietary restrictions?",
+                "topic": "allergies/dietary"
+            },
+            {
+                "initial": "My dog's name is Max and he's a golden retriever",
+                "query": "What's my pet's name?",
+                "topic": "pet name"
+            },
+            {
+                "initial": "I work as a software engineer at Google in Mountain View",
+                "query": "Where do I work?",
+                "topic": "job/workplace"
+            },
+            {
+                "initial": "I'm planning a trip to Japan next summer for 2 weeks",
+                "query": "What travel plans did I mention?",
+                "topic": "travel plans"
+            },
+            {
+                "initial": "I prefer working out in the morning around 6 AM",
+                "query": "When do I like to exercise?",
+                "topic": "workout schedule"
+            },
+            {
+                "initial": "My birthday is on December 15th",
+                "query": "What's my birth date?",
+                "topic": "birthday"
+            },
+            {
+                "initial": "I'm learning Python and JavaScript for web development",
+                "query": "What programming languages am I studying?",
+                "topic": "learning/skills"
+            },
+            {
+                "initial": "I live in Edmonton, Alberta, Canada",
+                "query": "Where is my home?",
+                "topic": "location"
+            }
         ]
 
-        # Store test data
-        print(f"\nStoring {len(test_pairs)} test exchanges...")
-        for i, (query, response) in enumerate(test_pairs):
+        # Store initial statements (simulating early conversation)
+        print(f"\nStoring {len(test_pairs)} initial statements (turns 1-{len(test_pairs)})...")
+        for i, pair in enumerate(test_pairs):
+            # Store the initial statement
             self.memory.add_turn(
                 conversation_id=conv_id,
-                text=query,
-                metadata={'response': response, 'test_index': i}
+                text=pair["initial"],
+                metadata={
+                    'response': f"Got it, I'll remember that about {pair['topic']}.",
+                    'test_index': i,
+                    'topic': pair['topic']
+                }
             )
 
-        # Give Qdrant time to index (important for local Qdrant)
-        await asyncio.sleep(1)
+            # Add some filler turns to simulate real conversation distance
+            for j in range(3):
+                filler_text = f"Filler message {i*3 + j}"
+                self.memory.add_turn(
+                    conversation_id=conv_id,
+                    text=filler_text,
+                    metadata={'response': 'Acknowledged', 'filler': True}
+                )
+
+        # Give Qdrant time to index (important!)
+        print(f"Waiting for Qdrant to index {self.memory.get_conversation_length(conv_id)} turns...")
+        await asyncio.sleep(2)  # 2 seconds for larger dataset
 
         print(f"Stored data. Conversation has {self.memory.get_conversation_length(conv_id)} turns")
 
-        # Test retrieval
+        # Test retrieval with DIFFERENT wording (semantic understanding)
+        print(f"\nTesting semantic retrieval (different wording than storage)...")
+        print("="*80)
+
         correct = 0
         similarities = []
+        results_detail = []
 
-        print(f"\nTesting retrieval for each query...")
-        for i, (query, expected_response) in enumerate(test_pairs):
-            context = self.memory.retrieve_context(conv_id, query, top_k=3)
+        for i, pair in enumerate(test_pairs):
+            print(f"\n  Test {i+1}/{len(test_pairs)}: {pair['topic']}")
+            print(f"    Stored: '{pair['initial'][:60]}...'")
+            print(f"    Query:  '{pair['query'][:60]}...'")
 
-            print(f"  Query {i+1}: '{query[:30]}...'")
-            print(f"    Retrieved: {len(context.get('results', []))} results")
+            # Retrieve using different wording
+            context = self.memory.retrieve_context(conv_id, pair['query'], top_k=5)
 
             if context.get('success') and context.get('results'):
                 results = context['results']
 
-                # Check if expected response is in top result
-                if results:
-                    top_result = results[0]
-                    top_response = top_result['metadata'].get('response', '')
-                    similarity = top_result.get('similarity', 0)
-                    similarities.append(similarity)
+                # Look for the original statement in results
+                found = False
+                top_similarity = 0
 
-                    print(f"    Top match: '{top_result['text'][:30]}...'")
-                    print(f"    Similarity: {similarity:.3f}")
+                for result in results:
+                    # Skip filler messages
+                    if result['metadata'].get('filler'):
+                        continue
 
-                    if expected_response in top_response or top_response in expected_response:
-                        correct += 1
-                        print(f"    ✅ Correct match!")
-                    else:
-                        print(f"    ❌ Wrong match (expected: '{expected_response[:30]}...')")
-                else:
-                    print(f"    ❌ No results returned")
+                    similarity = result.get('similarity', 0)
+
+                    # Check if this is the matching topic
+                    if result['metadata'].get('topic') == pair['topic']:
+                        found = True
+                        similarities.append(similarity)
+                        top_similarity = similarity
+
+                        print(f"    ✅ FOUND! Similarity: {similarity:.3f}")
+                        print(f"    Retrieved: '{result['text'][:60]}...'")
+
+                        if similarity >= 0.4:  # Good semantic match threshold
+                            correct += 1
+                            results_detail.append({
+                                'test': i+1,
+                                'topic': pair['topic'],
+                                'similarity': similarity,
+                                'success': True
+                            })
+                        else:
+                            print(f"    ⚠️  Low similarity (< 0.4), may not be useful")
+                            results_detail.append({
+                                'test': i+1,
+                                'topic': pair['topic'],
+                                'similarity': similarity,
+                                'success': False,
+                                'reason': 'Low similarity'
+                            })
+                        break
+
+                if not found:
+                    print(f"    ❌ NOT FOUND in top results")
+                    print(f"    Top result was: '{results[0]['text'][:60]}...' ({results[0].get('similarity', 0):.3f})")
+                    results_detail.append({
+                        'test': i+1,
+                        'topic': pair['topic'],
+                        'success': False,
+                        'reason': 'Not in top results'
+                    })
             else:
-                print(f"    ❌ Retrieval failed: {context.get('error', 'Unknown error')}")
+                print(f"    ❌ Retrieval failed: {context.get('error', 'No results')}")
+                results_detail.append({
+                    'test': i+1,
+                    'topic': pair['topic'],
+                    'success': False,
+                    'reason': 'Retrieval failed'
+                })
 
+        # Calculate metrics
         accuracy = (correct / len(test_pairs) * 100) if test_pairs else 0
 
         results = {
@@ -238,21 +336,32 @@ class RetrievalAccuracyBenchmark:
             'total': len(test_pairs),
             'avg_similarity': np.mean(similarities) if similarities else 0,
             'min_similarity': np.min(similarities) if similarities else 0,
-            'max_similarity': np.max(similarities) if similarities else 0
+            'max_similarity': np.max(similarities) if similarities else 0,
+            'details': results_detail
         }
 
-        print(f"\nRESULTS:")
-        print(f"  Accuracy: {accuracy:.1f}% ({correct}/{len(test_pairs)})")
+        # Print summary
+        print("\n" + "="*80)
+        print("RESULTS:")
+        print(f"  Accuracy: {accuracy:.1f}% ({correct}/{len(test_pairs)} with similarity >= 0.4)")
         print(f"  Avg similarity: {results['avg_similarity']:.3f}")
 
         if similarities:
             print(f"  Min similarity: {results['min_similarity']:.3f}")
             print(f"  Max similarity: {results['max_similarity']:.3f}")
         else:
-            print(f"  Min similarity: N/A (no results)")
-            print(f"  Max similarity: N/A (no results)")
+            print(f"  Min similarity: N/A (no matches found)")
+            print(f"  Max similarity: N/A (no matches found)")
+
+        # Interpretation guide
+        print("\n  Similarity Score Interpretation:")
+        print("    0.7-1.0: Excellent semantic match")
+        print("    0.5-0.7: Good semantic match")
+        print("    0.4-0.5: Acceptable match")
+        print("    <0.4:   Poor match (not counted as correct)")
 
         return results
+
 
 
 async def run_all_benchmarks():
@@ -263,33 +372,10 @@ async def run_all_benchmarks():
     print("\nStarting comprehensive GPU benchmark suite...")
     print("This will take approximately 10-15 minutes")
 
-    # System info
-    try:
-        import torch
-        import subprocess
-
-        print("\nSYSTEM INFORMATION")
-        print("-"*80)
-
-        gpu_info = subprocess.check_output(['nvidia-smi', '--query-gpu=name,memory.total,driver_version', 
-                                           '--format=csv,noheader,nounits']).decode().strip()
-        print(f"GPU: {gpu_info}")
-
-        print(f"CPU cores: {os.cpu_count()}")
-
-        import psutil
-        ram_gb = psutil.virtual_memory().total / (1024**3)
-        print(f"RAM: {ram_gb:.1f} GB")
-
-        print(f"Python: {sys.version.split()[0]}")
-        print()
-    except:
-        pass
-
     # Initialize system
-    print("Initializing system...\n")
+    print("\nInitializing system...\n")
 
-    # Create vector DB (use env var for backend)
+    # Create vector DB
     vector_db_backend = os.getenv("VECTOR_DB_BACKEND", "qdrant")
     print(f"Using vector DB: {vector_db_backend.upper()}")
     vector_db = create_vector_db(backend=vector_db_backend)
@@ -366,7 +452,7 @@ async def run_all_benchmarks():
         print(f"Prompt growth: {all_results['memory_efficiency']['prompt_growth_percent']:.1f}%")
 
     if 'accuracy' in all_results and 'accuracy_percent' in all_results['accuracy']:
-        print(f"\nRetrieval accuracy: {all_results['accuracy']['accuracy_percent']:.1f}%")
+        print(f"\nSemantic retrieval accuracy: {all_results['accuracy']['accuracy_percent']:.1f}%")
         print(f"Avg similarity: {all_results['accuracy']['avg_similarity']:.3f}")
 
     print("\n" + "="*80)
