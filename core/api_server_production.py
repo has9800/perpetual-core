@@ -1,6 +1,6 @@
 """
 Infinite Memory Inference API - PRODUCTION VERSION
-OPTIMIZED: 90% GPU utilization, async operations
+OPTIMIZED: Qdrant vector DB, 90% GPU utilization, async operations
 """
 
 from fastapi import FastAPI, HTTPException, Header
@@ -93,7 +93,8 @@ class InferenceAPI:
             return {
                 "status": "healthy",
                 "uptime_seconds": time.time() - self.start_time,
-                "model": os.getenv("MODEL_NAME", "TheBloke/Mistral-7B-Instruct-v0.2-GPTQ"),
+                "model": os.getenv("MODEL_NAME", "TheBloke/Llama-2-7B-Chat-GPTQ"),
+                "vector_db": os.getenv("VECTOR_DB_BACKEND", "qdrant"),
                 "memory_stats": stats['memory_stats']
             }
 
@@ -166,7 +167,7 @@ class InferenceAPI:
         @self.app.get("/v1/models")
         async def list_models():
             """List models"""
-            model_name = os.getenv("MODEL_NAME", "TheBloke/Mistral-7B-Instruct-v0.2-GPTQ")
+            model_name = os.getenv("MODEL_NAME", "TheBloke/Llama-2-7B-Chat-GPTQ")
             return {
                 "object": "list",
                 "data": [{
@@ -228,33 +229,33 @@ class InferenceAPI:
 
 
 def create_app():
-    """Create production app with OPTIMIZED DEFAULTS"""
+    """Create production app with QDRANT + OPTIMIZED SETTINGS"""
     from vector_db_adapters import create_vector_db
     from memory_manager import MemoryManager
     from vllm_wrapper_production import InfiniteMemoryEngine, create_vllm_engine
 
-    # OPTIMIZED DEFAULTS FOR THROUGHPUT
+    # PRODUCTION OPTIMIZED DEFAULTS
     model_name = os.getenv("MODEL_NAME", "TheBloke/Llama-2-7B-Chat-GPTQ")
     quantization = os.getenv("MODEL_QUANTIZATION", "gptq")
-    gpu_memory = float(os.getenv("GPU_MEMORY_UTILIZATION", "0.9"))  # INCREASED
+    gpu_memory = float(os.getenv("GPU_MEMORY_UTILIZATION", "0.9"))
     max_model_len = int(os.getenv("MAX_MODEL_LEN", "4096"))
-    vector_db_backend = os.getenv("VECTOR_DB_BACKEND", "chromadb")
+    vector_db_backend = os.getenv("VECTOR_DB_BACKEND", "qdrant")  # QDRANT BY DEFAULT
     cache_capacity = int(os.getenv("CACHE_CAPACITY", "1000"))
     api_keys_str = os.getenv("API_KEYS", "")
     api_keys = [k.strip() for k in api_keys_str.split(",") if k.strip()] if api_keys_str else None
 
     logger.info("="*80)
-    logger.info("Infinite Memory Inference API - OPTIMIZED")
+    logger.info("Infinite Memory Inference API - PRODUCTION (Qdrant)")
     logger.info("="*80)
     logger.info(f"Model: {model_name}")
     logger.info(f"Quantization: {quantization}")
     logger.info(f"GPU Memory: {gpu_memory * 100}%")
-    logger.info(f"Vector DB: {vector_db_backend}")
+    logger.info(f"Vector DB: {vector_db_backend.upper()}")
     logger.info(f"Cache capacity: {cache_capacity}")
     logger.info(f"API keys: {'Enabled' if api_keys else 'Disabled (development mode)'}")
     logger.info("")
 
-    logger.info("Initializing vector database...")
+    logger.info(f"Initializing {vector_db_backend.upper()} vector database...")
     vector_db = create_vector_db(backend=vector_db_backend)
     logger.info("✅ Vector DB ready")
 
@@ -281,7 +282,7 @@ def create_app():
         memory_manager=memory_manager,
         max_context_tokens=int(os.getenv("MAX_CONTEXT_TOKENS", "4096")),
         context_retrieval_k=int(os.getenv("CONTEXT_RETRIEVAL_K", "3")),
-        async_memory=True  # Enable async operations
+        async_memory=True
     )
     logger.info("✅ Infinite memory engine ready")
 
@@ -294,11 +295,10 @@ def create_app():
     logger.info("✅ API server ready")
 
     logger.info("="*80)
-    logger.info("🚀 Infinite Memory Inference API Started (OPTIMIZED)")
+    logger.info("🚀 Infinite Memory Inference API Started (Qdrant + Optimized)")
     logger.info("="*80)
 
     return api.app
-
 
 if __name__ == "__main__":
     app = create_app()
