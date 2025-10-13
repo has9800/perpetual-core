@@ -233,7 +233,7 @@ def create_app():
     from memory_manager import MemoryManager
     from vllm_wrapper_production import InfiniteMemoryEngine, create_vllm_engine
 
-    model_name = os.getenv("MODEL_NAME", "meta-llama/Llama-3-70b-chat-hf")
+    model_name = os.getenv("MODEL_NAME", "TheBloke/Mistral-7B-Instruct-v0.2-GPTQ")
     quantization = os.getenv("MODEL_QUANTIZATION", "int8")
     vector_db_backend = os.getenv("VECTOR_DB_BACKEND", "chromadb")
     cache_capacity = int(os.getenv("CACHE_CAPACITY", "1000"))
