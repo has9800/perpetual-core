@@ -1,6 +1,7 @@
 """
 Infinite Memory Inference API - PRODUCTION VERSION
 Ready for deployment with real vLLM + ChromaDB
+HARDCODED DEFAULTS - NO .env FILE NEEDED
 """
 
 from fastapi import FastAPI, HTTPException, Header
@@ -13,7 +14,7 @@ from dotenv import load_dotenv
 import uvicorn
 import logging
 
-# Load environment variables
+# Load environment variables (optional now)
 load_dotenv()
 
 # Setup logging
@@ -93,7 +94,7 @@ class InferenceAPI:
             return {
                 "status": "healthy",
                 "uptime_seconds": time.time() - self.start_time,
-                "model": os.getenv("MODEL_NAME", "unknown"),
+                "model": os.getenv("MODEL_NAME", "TheBloke/Mistral-7B-Instruct-v0.2-GPTQ"),
                 "memory_stats": stats['memory_stats']
             }
 
@@ -166,7 +167,7 @@ class InferenceAPI:
         @self.app.get("/v1/models")
         async def list_models():
             """List models"""
-            model_name = os.getenv("MODEL_NAME", "unknown")
+            model_name = os.getenv("MODEL_NAME", "TheBloke/Mistral-7B-Instruct-v0.2-GPTQ")
             return {
                 "object": "list",
                 "data": [{
@@ -228,23 +229,27 @@ class InferenceAPI:
 
 
 def create_app():
-    """Create production app with environment configuration"""
+    """Create production app with HARDCODED DEFAULTS"""
     from vector_db_adapters import create_vector_db
     from memory_manager import MemoryManager
     from vllm_wrapper_production import InfiniteMemoryEngine, create_vllm_engine
 
+    # HARDCODED DEFAULTS - CORRECT VALUES
     model_name = os.getenv("MODEL_NAME", "TheBloke/Mistral-7B-Instruct-v0.2-GPTQ")
-    quantization = os.getenv("MODEL_QUANTIZATION", "int8")
+    quantization = os.getenv("MODEL_QUANTIZATION", "gptq")
+    gpu_memory = float(os.getenv("GPU_MEMORY_UTILIZATION", "0.85"))
+    max_model_len = int(os.getenv("MAX_MODEL_LEN", "8192"))
     vector_db_backend = os.getenv("VECTOR_DB_BACKEND", "chromadb")
     cache_capacity = int(os.getenv("CACHE_CAPACITY", "1000"))
     api_keys_str = os.getenv("API_KEYS", "")
     api_keys = [k.strip() for k in api_keys_str.split(",") if k.strip()] if api_keys_str else None
 
     logger.info("="*80)
-    logger.info("Initializing Infinite Memory Inference API")
+    logger.info("Infinite Memory Inference API")
     logger.info("="*80)
     logger.info(f"Model: {model_name}")
     logger.info(f"Quantization: {quantization}")
+    logger.info(f"GPU Memory: {gpu_memory * 100}%")
     logger.info(f"Vector DB: {vector_db_backend}")
     logger.info(f"Cache capacity: {cache_capacity}")
     logger.info(f"API keys: {'Enabled' if api_keys else 'Disabled (development mode)'}")
@@ -266,8 +271,8 @@ def create_app():
     vllm_engine = create_vllm_engine(
         model_name=model_name,
         quantization=quantization,
-        gpu_memory_utilization=float(os.getenv("GPU_MEMORY_UTILIZATION", "0.9")),
-        max_model_len=int(os.getenv("MAX_MODEL_LEN", "8192"))
+        gpu_memory_utilization=gpu_memory,
+        max_model_len=max_model_len
     )
     logger.info("✅ vLLM engine ready")
 
