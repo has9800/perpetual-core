@@ -41,7 +41,7 @@ echo "Checking .env configuration..."
 if [ ! -f ".env" ]; then
     echo "⚠️  No .env file found. Creating default..."
     cat > .env << EOF
-MODEL_NAME=meta-llama/Llama-3-8b-instruct
+MODEL_NAME=TheBloke/Mistral-7B-Instruct-v0.2-GPTQ
 MODEL_QUANTIZATION=int8
 GPU_MEMORY_UTILIZATION=0.9
 MAX_MODEL_LEN=8192

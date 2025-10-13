@@ -23,7 +23,7 @@ print()
 # ============================================================================
 
 BENCHMARK_CONFIG = {
-    'model_name': 'meta-llama/Llama-3-8b-instruct',  # Start with 8B for speed
+    'model_name': 'TheBloke/Mistral-7B-Instruct-v0.2-GPTQ',  # Start with 8B for speed
     'quantization': 'int8',
     'test_duration_seconds': 300,  # 5 minutes per test
     'conversation_lengths': [10, 50, 100],  # Test different conversation lengths
