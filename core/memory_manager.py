@@ -1,11 +1,10 @@
 """
 Memory Manager for Infinite Context
-OPTIMIZED: Async operations for better throughput
+FIXED: Proper return dict structure for accuracy tests
 """
 
 from typing import List, Dict, Optional
 import time
-import asyncio
 from collections import OrderedDict
 
 
@@ -45,7 +44,7 @@ class MemoryManager:
                 text: str,
                 metadata: Optional[Dict] = None) -> bool:
         """
-        Add conversation turn to memory (synchronous version)
+        Add conversation turn to memory
 
         Args:
             conversation_id: Unique conversation ID (stays same for all turns)
@@ -99,76 +98,12 @@ class MemoryManager:
             self.stats['errors']['add_turn'] = self.stats['errors'].get('add_turn', 0) + 1
             return False
 
-    async def add_turn_async(self,
-                            conversation_id: str,
-                            text: str,
-                            metadata: Optional[Dict] = None) -> bool:
-        """
-        Add conversation turn to memory (async non-blocking version)
-        Use this for better throughput - doesn't block generation
-
-        Args:
-            conversation_id: Unique conversation ID
-            text: The user query
-            metadata: Additional data
-        """
-        try:
-            # Track turn number for this conversation
-            if conversation_id not in self.conversation_turns:
-                self.conversation_turns[conversation_id] = 0
-
-            self.conversation_turns[conversation_id] += 1
-            turn_number = self.conversation_turns[conversation_id]
-
-            # Build metadata
-            meta = metadata or {}
-            meta.update({
-                'conversation_id': conversation_id,
-                'turn_number': turn_number,
-                'timestamp': time.time()
-            })
-
-            # Add to cache immediately (fast)
-            cache_key = f"{conversation_id}_{turn_number}"
-            self.recent_cache[cache_key] = {
-                'text': text,
-                'metadata': meta
-            }
-
-            # Evict old entries from cache
-            if len(self.recent_cache) > self.cache_capacity:
-                self.recent_cache.popitem(last=False)
-                self.stats['evictions'] += 1
-
-            self.stats['total_turns'] += 1
-            self.stats['snapshots_created'] += 1
-
-            # Store in vector DB asynchronously (non-blocking)
-            loop = asyncio.get_event_loop()
-            success = await loop.run_in_executor(
-                None,
-                self.vector_db.add,
-                conversation_id,
-                text,
-                meta
-            )
-
-            if success:
-                self.stats['vector_db_writes'] += 1
-
-            return success
-
-        except Exception as e:
-            print(f"Memory add async error: {e}")
-            self.stats['errors']['add_turn_async'] = self.stats['errors'].get('add_turn_async', 0) + 1
-            return False
-
     def retrieve_context(self,
                         conversation_id: str,
                         query: str,
                         top_k: int = 3) -> Dict:
         """
-        Retrieve relevant context from conversation history (synchronous)
+        Retrieve relevant context from conversation history
 
         Args:
             conversation_id: Conversation to search within
@@ -176,7 +111,7 @@ class MemoryManager:
             top_k: Number of relevant turns to retrieve
 
         Returns:
-            Dict with 'results' list and 'metadata'
+            Dict with 'success', 'results' list, and 'metadata'
         """
         try:
             self.stats['retrievals'] += 1
@@ -193,6 +128,7 @@ class MemoryManager:
             results = sorted(results, key=lambda x: x.get('similarity', 0), reverse=True)
 
             return {
+                'success': True,  # ALWAYS include success key
                 'results': results,
                 'conversation_id': conversation_id,
                 'query': query,
@@ -203,47 +139,7 @@ class MemoryManager:
             print(f"Memory retrieval error: {e}")
             self.stats['errors']['retrieve_context'] = self.stats['errors'].get('retrieve_context', 0) + 1
             return {
-                'results': [],
-                'conversation_id': conversation_id,
-                'error': str(e)
-            }
-
-    async def retrieve_context_async(self,
-                                     conversation_id: str,
-                                     query: str,
-                                     top_k: int = 3) -> Dict:
-        """
-        Retrieve relevant context asynchronously (non-blocking)
-        Use this for better throughput
-        """
-        try:
-            self.stats['retrievals'] += 1
-            self.stats['vector_db_searches'] += 1
-
-            # Query vector DB asynchronously
-            loop = asyncio.get_event_loop()
-            results = await loop.run_in_executor(
-                None,
-                self.vector_db.query,
-                conversation_id,
-                query,
-                top_k
-            )
-
-            # Sort by similarity (highest first)
-            results = sorted(results, key=lambda x: x.get('similarity', 0), reverse=True)
-
-            return {
-                'results': results,
-                'conversation_id': conversation_id,
-                'query': query,
-                'retrieved_count': len(results)
-            }
-
-        except Exception as e:
-            print(f"Memory retrieval async error: {e}")
-            self.stats['errors']['retrieve_context_async'] = self.stats['errors'].get('retrieve_context_async', 0) + 1
-            return {
+                'success': False,  # ALWAYS include success key
                 'results': [],
                 'conversation_id': conversation_id,
                 'error': str(e)

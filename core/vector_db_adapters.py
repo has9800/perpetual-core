@@ -1,19 +1,21 @@
 """
 Vector database adapters for conversation memory
 Supports: ChromaDB (development) and Qdrant (production)
+FIXED: Thread-safe Qdrant operations
 """
 
 from typing import List, Dict, Optional
 import os
+import threading
 
 
 class QdrantAdapter:
-    """Qdrant adapter - Fast, production-ready vector DB"""
+    """Qdrant adapter - Fast, production-ready vector DB with thread safety"""
 
     def __init__(self, 
                  persist_dir: str = "./data/qdrant_db",
                  collection_name: str = "conversations"):
-        """Initialize Qdrant client"""
+        """Initialize Qdrant client with thread-safe operations"""
         from qdrant_client import QdrantClient
         from qdrant_client.models import Distance, VectorParams, PointStruct
 
@@ -22,6 +24,9 @@ class QdrantAdapter:
         # Create local persistent client
         self.client = QdrantClient(path=persist_dir)
         self.collection_name = collection_name
+
+        # Thread lock for concurrent access protection
+        self._lock = threading.RLock()
 
         # Initialize sentence transformer for embeddings
         from sentence_transformers import SentenceTransformer
@@ -50,7 +55,7 @@ class QdrantAdapter:
             conversation_id: str,
             text: str,
             metadata: Optional[Dict] = None) -> bool:
-        """Add conversation turn with embedding"""
+        """Add conversation turn with embedding (thread-safe)"""
         try:
             if not text or not text.strip():
                 return False
@@ -62,30 +67,31 @@ class QdrantAdapter:
 
             # Create unique ID
             turn_number = metadata.get('turn_number', 0) if metadata else 0
-            point_id = hash(f"{conversation_id}_{turn_number}") & 0x7FFFFFFF  # Positive int
+            point_id = hash(f"{conversation_id}_{turn_number}") & 0x7FFFFFFFFFFFFFFF  # Positive int64
 
             # Build payload (metadata)
             payload = metadata or {}
             payload['conversation_id'] = conversation_id
             payload['text'] = text
 
-            # Filter out None values (Qdrant accepts them but cleaner without)
+            # Filter out None values
             clean_payload = {
                 k: v for k, v in payload.items() 
                 if v is not None
             }
 
-            # Upsert point
-            self.client.upsert(
-                collection_name=self.collection_name,
-                points=[
-                    PointStruct(
-                        id=point_id,
-                        vector=vector,
-                        payload=clean_payload
-                    )
-                ]
-            )
+            # Thread-safe upsert
+            with self._lock:
+                self.client.upsert(
+                    collection_name=self.collection_name,
+                    points=[
+                        PointStruct(
+                            id=point_id,
+                            vector=vector,
+                            payload=clean_payload
+                        )
+                    ]
+                )
 
             return True
 
@@ -99,7 +105,7 @@ class QdrantAdapter:
              conversation_id: str,
              query_text: str,
              top_k: int = 3) -> List[Dict]:
-        """Query with similarity threshold"""
+        """Query with similarity threshold (thread-safe)"""
         try:
             if not query_text or not query_text.strip():
                 return []
@@ -109,20 +115,21 @@ class QdrantAdapter:
             # Generate query embedding
             query_vector = self.encoder.encode(query_text).tolist()
 
-            # Search with conversation filter
-            results = self.client.search(
-                collection_name=self.collection_name,
-                query_vector=query_vector,
-                limit=top_k,
-                query_filter=Filter(
-                    must=[
-                        FieldCondition(
-                            key="conversation_id",
-                            match=MatchValue(value=conversation_id)
-                        )
-                    ]
+            # Thread-safe search
+            with self._lock:
+                results = self.client.search(
+                    collection_name=self.collection_name,
+                    query_vector=query_vector,
+                    limit=top_k,
+                    query_filter=Filter(
+                        must=[
+                            FieldCondition(
+                                key="conversation_id",
+                                match=MatchValue(value=conversation_id)
+                            )
+                        ]
+                    )
                 )
-            )
 
             # Format results
             formatted = []
@@ -144,23 +151,24 @@ class QdrantAdapter:
             return []
 
     def get_by_conversation(self, conversation_id: str) -> List[Dict]:
-        """Get all turns for a conversation"""
+        """Get all turns for a conversation (thread-safe)"""
         try:
             from qdrant_client.models import Filter, FieldCondition, MatchValue
 
-            # Scroll through all points for this conversation
-            results = self.client.scroll(
-                collection_name=self.collection_name,
-                scroll_filter=Filter(
-                    must=[
-                        FieldCondition(
-                            key="conversation_id",
-                            match=MatchValue(value=conversation_id)
-                        )
-                    ]
-                ),
-                limit=1000
-            )
+            # Thread-safe scroll
+            with self._lock:
+                results = self.client.scroll(
+                    collection_name=self.collection_name,
+                    scroll_filter=Filter(
+                        must=[
+                            FieldCondition(
+                                key="conversation_id",
+                                match=MatchValue(value=conversation_id)
+                            )
+                        ]
+                    ),
+                    limit=1000
+                )
 
             formatted = []
             for point in results[0]:  # results is (points, next_page_offset)
@@ -176,21 +184,22 @@ class QdrantAdapter:
             return []
 
     def delete_conversation(self, conversation_id: str):
-        """Delete all turns for a conversation"""
+        """Delete all turns for a conversation (thread-safe)"""
         try:
             from qdrant_client.models import Filter, FieldCondition, MatchValue
 
-            self.client.delete(
-                collection_name=self.collection_name,
-                points_selector=Filter(
-                    must=[
-                        FieldCondition(
-                            key="conversation_id",
-                            match=MatchValue(value=conversation_id)
-                        )
-                    ]
+            with self._lock:
+                self.client.delete(
+                    collection_name=self.collection_name,
+                    points_selector=Filter(
+                        must=[
+                            FieldCondition(
+                                key="conversation_id",
+                                match=MatchValue(value=conversation_id)
+                            )
+                        ]
+                    )
                 )
-            )
         except Exception as e:
             print(f"Qdrant delete error: {e}")
 
