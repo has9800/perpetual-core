@@ -67,23 +67,23 @@ We built a **semantic memory system** that:
         └──────────────────────────────────────┘
                             ↓
         ┌──────────────────────────────────────┐
-        │  Context Building                     │
-        │  • 3 relevant past exchanges          │
-        │  • 3 most recent turns                │
-        │  • Current query                      │
-        │  Total: ~140 tokens (constant!)       │
+        │  Context Building                    │
+        │  • 3 relevant past exchanges         │
+        │  • 3 most recent turns               │
+        │  • Current query                     │
+        │  Total: ~140 tokens (constant!)      │
         └──────────────────────────────────────┘
                             ↓
         ┌──────────────────────────────────────┐
         │  vLLM Generation (H100 GPU)          │
-        │  Processes optimized context          │
-        │  Generates response                   │
+        │  Processes optimized context         │
+        │  Generates response                  │
         └──────────────────────────────────────┘
                             ↓
         ┌──────────────────────────────────────┐
-        │  Store in Memory                      │
-        │  Query + Response → Vector DB         │
-        │  Ready for future retrieval           │
+        │  Store in Memory                     │
+        │  Query + Response → Vector DB        │
+        │  Ready for future retrieval          │
         └──────────────────────────────────────┘
 ```
 
@@ -408,16 +408,9 @@ Accuracy: 100% (5/5 perfect matches)
 
 ## 📞 Contact
 
-**For investors, partnerships, or beta access:**
-- Email: [your-email]
-- Website: [your-website]
-- GitHub: [this-repo]
-
----
-
-## 📄 License
-
-[Your License Here]
+**For beta access and inquiries:**
+- Email: khumeryb@gmail.com
+- GitHub: has9800
 
 ---
 
@@ -434,7 +427,34 @@ Inspired by research on:
 - RAG systems (Lewis et al. 2020)
 - Long-context LLMs
 
----
+#### Sources
+
+Supporting Research with Specific Numbers:
+
+*1. "Long-context LLMs Struggle with Long In-context Learning"*
+Authors: Tianle Li, Ge Zhang, et al. (2024)
+ArXiv: https://arxiv.org/abs/2404.02060
+Cited by: 279
+**Specific Numbers:**
+Models perform well on tasks with smaller label spaces
+Significant degradation on challenging tasks like Discovery (174 labels)
+Performance drops as context length increases from 2K to 50K tokens
+
+*2. "Context Length Alone Hurts LLM Performance"*
+Authors: Recent 2025 study
+ArXiv: https://arxiv.org/html/2510.05381v1
+**Specific Numbers:**
+13.9% to 85% performance degradation as input length increases
+Llama-3.1-8B: 24.2% accuracy drop at 30K tokens despite perfect retrieval
+Even with 100% retrieval accuracy, performance still degrades
+
+*3. "LLMs Get Lost In Multi-Turn Conversation"*
+ArXiv: https://arxiv.org/html/2505.06120v1
+**Specific Numbers:**
+50% performance degradation in multi-turn conversations
+25-point drop from 90% to 65% accuracy
+Affects ALL models from Llama3.1-8B to Gemini 2.5 Pro
+
 
 **Built in Edmonton, AB, Canada 🇨🇦**
 
