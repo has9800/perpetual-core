@@ -1,147 +1,150 @@
 """
-Vector Database Adapters
-Supports multiple vector DB backends with unified interface
+Vector database adapters for conversation memory
+FIXED: Proper embeddings, persistence, and retrieval
 """
 
-from abc import ABC, abstractmethod
 from typing import List, Dict, Optional
-import time
+import os
 
 
-class VectorDBAdapter(ABC):
-    """Base adapter for vector databases"""
+class ChromaDBAdapter:
+    """ChromaDB adapter with proper embedding support"""
 
-    @abstractmethod
-    def add(self, doc_id: str, text: str, metadata: Dict) -> float:
-        """Add document, return latency in ms"""
-        pass
+    def __init__(self, persist_dir: str = "./data/chroma_db"):
+        """Initialize ChromaDB with sentence transformers"""
+        import chromadb
+        from chromadb.config import Settings
 
-    @abstractmethod
-    def search(self, query: str, top_k: int, filter: Optional[Dict] = None) -> List[Dict]:
-        """Search for similar documents"""
-        pass
+        os.makedirs(persist_dir, exist_ok=True)
 
-    @abstractmethod
-    def delete(self, doc_id: str) -> bool:
-        """Delete document"""
-        pass
-
-    @abstractmethod
-    def get_stats(self) -> Dict:
-        """Get database statistics"""
-        pass
-
-
-class ChromaDBAdapter(VectorDBAdapter):
-    """Adapter for ChromaDB"""
-
-    def __init__(self, collection_name: str = "conversations", 
-                 persist_directory: str = "./data/chroma_db"):
-        """Initialize ChromaDB adapter"""
-        try:
-            import chromadb
-            from chromadb.config import Settings
-        except ImportError:
-            raise ImportError("ChromaDB not installed. Run: pip install chromadb")
-
-        self.client = chromadb.Client(Settings(
-            persist_directory=persist_directory,
-            anonymized_telemetry=False
-        ))
-
-        self.collection = self.client.get_or_create_collection(
-            name=collection_name,
-            metadata={"description": "Conversation memory storage"}
+        # Create client with persistence
+        self.client = chromadb.PersistentClient(
+            path=persist_dir,
+            settings=Settings(
+                anonymized_telemetry=False,
+                allow_reset=True
+            )
         )
 
-        self.add_count = 0
-        self.search_count = 0
+        # Use sentence transformers embedding function
+        from chromadb.utils import embedding_functions
+        self.embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
+            model_name="all-MiniLM-L6-v2"
+        )
 
-    def add(self, doc_id: str, text: str, metadata: Dict) -> float:
-        """Add document to ChromaDB"""
-        start = time.time()
+        # Get or create collection
+        self.collection = self.client.get_or_create_collection(
+            name="conversations",
+            embedding_function=self.embedding_function,
+            metadata={"hnsw:space": "cosine"}
+        )
 
+        print(f"ChromaDB initialized: {self.collection.count()} documents")
+
+    def add(self, 
+            conversation_id: str,
+            text: str,
+            metadata: Optional[Dict] = None) -> bool:
+        """Add conversation turn with proper embedding"""
         try:
+            if not text or not text.strip():
+                return False
+
+            # Create unique ID
+            doc_id = f"{conversation_id}_{metadata.get('turn_number', 0)}"
+
+            # Add metadata
+            meta = metadata or {}
+            meta['conversation_id'] = conversation_id
+
+            # Add to collection (embeddings generated automatically)
             self.collection.add(
                 ids=[doc_id],
                 documents=[text],
-                metadatas=[metadata]
+                metadatas=[meta]
             )
-            self.add_count += 1
+
+            return True
 
         except Exception as e:
-            if "already exists" in str(e):
-                self.collection.update(
-                    ids=[doc_id],
-                    documents=[text],
-                    metadatas=[metadata]
-                )
-            else:
-                raise
+            print(f"ChromaDB add error: {e}")
+            return False
 
-        return (time.time() - start) * 1000
-
-    def search(self, query: str, top_k: int, filter: Optional[Dict] = None) -> List[Dict]:
-        """Search ChromaDB"""
+    def query(self,
+             conversation_id: str,
+             query_text: str,
+             top_k: int = 3) -> List[Dict]:
+        """Query with similarity threshold"""
         try:
-            where = filter if filter else None
+            if not query_text or not query_text.strip():
+                return []
 
+            # Query collection
             results = self.collection.query(
-                query_texts=[query],
+                query_texts=[query_text],
                 n_results=top_k,
-                where=where
+                where={"conversation_id": conversation_id}
             )
 
-            self.search_count += 1
-
+            # Format results with similarity scores
             formatted = []
-            if results['documents'] and results['documents'][0]:
-                for i in range(len(results['documents'][0])):
-                    formatted.append({
-                        'id': results['ids'][0][i],
-                        'text': results['documents'][0][i],
-                        'similarity': 1.0 - results['distances'][0][i],
-                        'metadata': results['metadatas'][0][i] if results['metadatas'] else {}
-                    })
+            if results and results['documents'] and len(results['documents'][0]) > 0:
+                for i, doc in enumerate(results['documents'][0]):
+                    distance = results['distances'][0][i] if results['distances'] else 1.0
+                    similarity = 1.0 - distance  # Convert distance to similarity
+
+                    # Only include if similarity > 0.3 (meaningful match)
+                    if similarity > 0.3:
+                        formatted.append({
+                            'text': doc,
+                            'metadata': results['metadatas'][0][i],
+                            'similarity': similarity
+                        })
 
             return formatted
 
         except Exception as e:
-            print(f"ChromaDB search error: {e}")
+            print(f"ChromaDB query error: {e}")
             return []
 
-    def delete(self, doc_id: str) -> bool:
-        """Delete document"""
+    def get_by_conversation(self, conversation_id: str) -> List[Dict]:
+        """Get all turns for a conversation"""
         try:
-            self.collection.delete(ids=[doc_id])
-            return True
+            results = self.collection.get(
+                where={"conversation_id": conversation_id}
+            )
+
+            if not results or not results['documents']:
+                return []
+
+            formatted = []
+            for i, doc in enumerate(results['documents']):
+                formatted.append({
+                    'text': doc,
+                    'metadata': results['metadatas'][i]
+                })
+
+            return formatted
+
+        except Exception as e:
+            print(f"ChromaDB get error: {e}")
+            return []
+
+    def delete_conversation(self, conversation_id: str):
+        """Delete all turns for a conversation"""
+        try:
+            results = self.collection.get(
+                where={"conversation_id": conversation_id}
+            )
+            if results and results['ids']:
+                self.collection.delete(ids=results['ids'])
         except Exception as e:
             print(f"ChromaDB delete error: {e}")
-            return False
-
-    def get_stats(self) -> Dict:
-        """Get stats"""
-        return {
-            'backend': 'ChromaDB',
-            'collection': self.collection.name,
-            'document_count': self.collection.count(),
-            'total_adds': self.add_count,
-            'total_searches': self.search_count
-        }
 
 
-def create_vector_db(backend: str = "chromadb", **kwargs) -> VectorDBAdapter:
-    """
-    Factory function to create vector DB adapter
-
-    Args:
-        backend: 'chromadb' or 'qdrant'
-        **kwargs: Backend-specific arguments
-
-    Returns:
-        VectorDBAdapter instance
-    """
-    if backend.lower() == "chromadb":
+def create_vector_db(backend: str = "chromadb", **kwargs):
+    """Factory function to create vector DB adapter"""
+    if backend == "chromadb":
         return ChromaDBAdapter(**kwargs)
     else:
-        raise ValueError(f"Unknown backend: {backend}. Use 'chromadb'")
+        raise ValueError(f"Unknown vector DB backend: {backend}")

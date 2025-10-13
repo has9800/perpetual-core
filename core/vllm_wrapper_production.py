@@ -1,6 +1,6 @@
 """
 vLLM Wrapper with Infinite Memory - PRODUCTION VERSION
-Compatible with vLLM v0.10+
+FIXED: Proper storage format, better retrieval, conversation ID consistency
 """
 
 import asyncio
@@ -67,44 +67,61 @@ class InfiniteMemoryEngine:
         start_time = time.time()
 
         try:
+            # Extract user query (last message)
+            user_query = ""
+            if request.messages:
+                for msg in reversed(request.messages):
+                    if msg['role'] == 'user':
+                        user_query = msg['content']
+                        break
+
+            if not user_query:
+                user_query = "continue"
+
+            # Get recent turns (last 3 exchanges)
             recent_turns = self.memory.get_recent_turns(
                 request.conversation_id,
-                limit=5
+                limit=3
             )
 
-            query = request.messages[-1]['content'] if request.messages else ""
+            # Retrieve relevant context from past (top 3 similar exchanges)
             context_result = self.memory.retrieve_context(
                 conversation_id=request.conversation_id,
-                query=query,
+                query=user_query,
                 top_k=self.context_retrieval_k
             )
 
             retrieved_context = context_result.get('results', [])
             self.context_retrievals += 1
 
+            # Build prompt with context
             prompt = self._build_prompt(
                 messages=request.messages,
                 recent_turns=recent_turns,
-                retrieved_context=retrieved_context
+                retrieved_context=retrieved_context,
+                user_query=user_query
             )
 
+            # Generate response
             response_text = await self._call_vllm(
                 prompt=prompt,
                 max_tokens=request.max_tokens,
                 temperature=request.temperature
             )
 
-            exchange_text = f"User: {query}\nAssistant: {response_text}"
+            # Store in memory: text=user_query, metadata includes response
             self.memory.add_turn(
                 conversation_id=request.conversation_id,
-                text=exchange_text,
+                text=user_query,  # Store query (searchable)
                 metadata={
+                    'response': response_text,  # Store response in metadata
                     'user_id': request.user_id,
                     'model': request.model,
                     'timestamp': time.time()
                 }
             )
 
+            # Update metrics
             self.generation_count += 1
             tokens_generated = len(response_text.split())
             self.total_tokens_generated += tokens_generated
@@ -117,7 +134,8 @@ class InfiniteMemoryEngine:
                     'latency_ms': latency,
                     'tokens_generated': tokens_generated,
                     'context_retrieved': len(retrieved_context),
-                    'recent_turns_used': len(recent_turns)
+                    'recent_turns_used': len(recent_turns),
+                    'conversation_turn': self.memory.get_conversation_length(request.conversation_id)
                 },
                 'success': True
             }
@@ -140,7 +158,7 @@ class InfiniteMemoryEngine:
             max_tokens=max_tokens,
             temperature=temperature,
             top_p=0.95,
-            stop=["</s>", "User:", "<|eot_id|>", "\n\nUser:"]
+            stop=["</s>", "User:", "<|eot_id|>", "\n\nUser:", "Human:"]
         )
 
         loop = asyncio.get_event_loop()
@@ -152,35 +170,47 @@ class InfiniteMemoryEngine:
         )
 
         if outputs and len(outputs) > 0:
-            return outputs[0].outputs[0].text
+            return outputs[0].outputs[0].text.strip()
         return ""
 
     def _build_prompt(self, 
                      messages: List[Dict],
                      recent_turns: List[str],
-                     retrieved_context: List[Dict]) -> str:
-        """Build prompt with context"""
+                     retrieved_context: List[Dict],
+                     user_query: str) -> str:
+        """Build prompt with retrieved context"""
         prompt_parts = []
 
-        if retrieved_context:
-            prompt_parts.append("# Relevant previous context:")
-            for ctx in retrieved_context[:3]:
-                prompt_parts.append(f"- {ctx['text'][:200]}")
+        # Add system message if present
+        system_msg = next((m['content'] for m in messages if m['role'] == 'system'), None)
+        if system_msg:
+            prompt_parts.append(f"System: {system_msg}")
             prompt_parts.append("")
 
+        # Add retrieved relevant context (if high similarity)
+        if retrieved_context:
+            high_quality = [ctx for ctx in retrieved_context if ctx.get('similarity', 0) > 0.5]
+            if high_quality:
+                prompt_parts.append("# Relevant context from earlier in conversation:")
+                for ctx in high_quality[:2]:  # Top 2 most relevant
+                    query = ctx['text']
+                    response = ctx['metadata'].get('response', '')
+                    if response:
+                        prompt_parts.append(f"Previously - User: {query[:100]}...")
+                        prompt_parts.append(f"Assistant: {response[:150]}...")
+                prompt_parts.append("")
+
+        # Add recent turns (last 3 exchanges)
         if recent_turns:
             prompt_parts.append("# Recent conversation:")
             for turn in recent_turns[-3:]:
                 prompt_parts.append(turn)
             prompt_parts.append("")
 
-        prompt_parts.append("# Current query:")
-        for msg in messages:
-            role = msg['role'].capitalize()
-            content = msg['content']
-            prompt_parts.append(f"{role}: {content}")
+        # Add current query
+        prompt_parts.append(f"User: {user_query}")
+        prompt_parts.append("Assistant:")
 
-        prompt_parts.append("\nAssistant:")
         return "\n".join(prompt_parts)
 
     def get_stats(self) -> Dict:
