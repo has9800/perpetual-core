@@ -1,4 +1,4 @@
-# Infinite Memory Inference API - Requirements
+# Python 3.12 compatible
 
 # Core API
 fastapi==0.104.1
@@ -9,14 +9,14 @@ python-dotenv==1.0.0
 # Vector Database
 chromadb==0.4.18
 
-# Embeddings (for better accuracy)
+# Embeddings
 sentence-transformers==2.2.2
 
 # vLLM Inference Engine
 vllm==0.6.3
 
 # Utilities
-numpy==1.24.3
+numpy>=1.26.0
 python-multipart==0.0.6
 psutil==5.9.6
 
