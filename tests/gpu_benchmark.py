@@ -489,9 +489,14 @@ async def run_all_benchmarks():
     print("Initializing system...")
     print()
 
+    import sys
+    import os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'core'))
+
     from vector_db_adapters import create_vector_db
     from memory_manager import MemoryManager
     from vllm_wrapper_production import InfiniteMemoryEngine, create_vllm_engine
+
 
     # Create components
     vector_db = create_vector_db(backend="chromadb")
