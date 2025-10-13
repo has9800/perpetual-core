@@ -1,238 +1,309 @@
 """
-vLLM Wrapper with Infinite Memory - PRODUCTION VERSION
-Real vLLM integration (no stubs)
+Infinite Memory Inference API - PRODUCTION VERSION
+Ready for deployment with real vLLM + ChromaDB
 """
 
-import asyncio
-from typing import List, Dict, Optional
+from fastapi import FastAPI, HTTPException, Header
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+from typing import List, Dict, Optional, Literal
 import time
-from dataclasses import dataclass
+import os
+from dotenv import load_dotenv
+import uvicorn
+import logging
+
+# Load environment variables
+load_dotenv()
+
+# Setup logging
+os.makedirs("./data/logs", exist_ok=True)
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO"),
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(os.getenv("LOG_FILE", "./data/logs/api.log")),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 
-@dataclass
-class GenerationRequest:
-    """Request for text generation"""
-    conversation_id: str
-    messages: List[Dict[str, str]]
+# Request/Response Models
+class Message(BaseModel):
+    role: Literal["system", "user", "assistant"]
+    content: str
+
+
+class ChatCompletionRequest(BaseModel):
     model: str
-    max_tokens: int = 1024
-    temperature: float = 0.7
-    stream: bool = False
-    user_id: Optional[str] = None
+    messages: List[Message]
+    conversation_id: Optional[str] = Field(default=None)
+    max_tokens: Optional[int] = 1024
+    temperature: Optional[float] = 0.7
+    stream: Optional[bool] = False
+    user: Optional[str] = None
 
 
-def create_vllm_engine(model_name: str,
-                       quantization: str = "int8",
-                       gpu_memory_utilization: float = 0.9,
-                       max_model_len: int = 8192):
-    """
-    Create real vLLM engine
-
-    Args:
-        model_name: HuggingFace model (e.g., "meta-llama/Llama-3-70b-chat-hf")
-        quantization: "int8", "fp16", or None
-        gpu_memory_utilization: GPU memory fraction to use
-        max_model_len: Maximum sequence length
-
-    Returns:
-        vLLM LLMEngine instance
-    """
-    from vllm import LLMEngine, EngineArgs
-
-    print(f"Loading vLLM engine: {model_name}")
-    print(f"  Quantization: {quantization}")
-    print(f"  Max length: {max_model_len}")
-    print(f"  GPU memory: {gpu_memory_utilization * 100}%")
-
-    args = EngineArgs(
-        model=model_name,
-        quantization=quantization,
-        gpu_memory_utilization=gpu_memory_utilization,
-        max_model_len=max_model_len,
-        trust_remote_code=True,
-        dtype="float16",
-        disable_log_stats=False
-    )
-
-    engine = LLMEngine.from_engine_args(args)
-
-    print("✅ vLLM engine loaded successfully")
-    return engine
+class ChatCompletionResponse(BaseModel):
+    id: str
+    object: str = "chat.completion"
+    created: int
+    model: str
+    choices: List[Dict]
+    usage: Dict
 
 
-class InfiniteMemoryEngine:
-    """vLLM engine with infinite conversation memory"""
+class InferenceAPI:
+    """Production API with infinite memory"""
 
-    def __init__(self,
-                 vllm_engine,
-                 memory_manager,
-                 max_context_tokens: int = 4096,
-                 context_retrieval_k: int = 3):
-        """Initialize engine with memory"""
-        self.engine = vllm_engine
-        self.memory = memory_manager
-        self.max_context_tokens = max_context_tokens
-        self.context_retrieval_k = context_retrieval_k
+    def __init__(self, engine, api_keys: Optional[List[str]] = None,
+                 rate_limit: int = 60):
+        self.engine = engine
+        self.api_keys = set(api_keys) if api_keys else None
+        self.rate_limit = rate_limit
+        self.request_counts = {}
+        self.start_time = time.time()
+        self.total_requests = 0
+        self.total_tokens = 0
 
-        self.generation_count = 0
-        self.total_tokens_generated = 0
-        self.context_retrievals = 0
+        self.app = FastAPI(
+            title="Infinite Memory Inference API",
+            description="vLLM with infinite conversation memory",
+            version="1.0.0"
+        )
 
-    async def generate(self, request: GenerationRequest) -> Dict:
-        """Generate response with automatic memory"""
-        start_time = time.time()
+        self.app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
-        try:
-            # Get recent context
-            recent_turns = self.memory.get_recent_turns(
-                request.conversation_id,
-                limit=5
-            )
+        self._register_routes()
 
-            # Retrieve relevant context from vector DB
-            query = request.messages[-1]['content'] if request.messages else ""
-            context_result = self.memory.retrieve_context(
-                conversation_id=request.conversation_id,
-                query=query,
-                top_k=self.context_retrieval_k
-            )
+    def _register_routes(self):
+        """Register API routes"""
 
-            retrieved_context = context_result.get('results', [])
-            self.context_retrievals += 1
+        @self.app.get("/health")
+        async def health():
+            """Health check"""
+            stats = self.engine.get_stats()
+            return {
+                "status": "healthy",
+                "uptime_seconds": time.time() - self.start_time,
+                "model": os.getenv("MODEL_NAME", "unknown"),
+                "memory_stats": stats['memory_stats']
+            }
 
-            # Build prompt
-            prompt = self._build_prompt(
-                messages=request.messages,
-                recent_turns=recent_turns,
-                retrieved_context=retrieved_context
-            )
+        @self.app.post("/v1/chat/completions")
+        async def chat_completions(
+            request: ChatCompletionRequest,
+            authorization: Optional[str] = Header(None)
+        ):
+            """OpenAI-compatible chat completions"""
+            api_key = self._extract_api_key(authorization)
+            if not self._verify_api_key(api_key):
+                logger.warning(f"Invalid API key: {api_key}")
+                raise HTTPException(status_code=401, detail="Invalid API key")
 
-            # Generate with vLLM
-            response_text = await self._call_vllm(
-                prompt=prompt,
+            if not self._check_rate_limit(api_key):
+                logger.warning(f"Rate limit exceeded: {api_key}")
+                raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+            conversation_id = request.conversation_id or f"conv_{int(time.time())}_{api_key[:8] if api_key else 'anon'}"
+
+            logger.info(f"Request: conv={conversation_id}, user={request.user or (api_key[:8] if api_key else 'anon')}")
+
+            from vllm_wrapper_production import GenerationRequest
+
+            gen_request = GenerationRequest(
+                conversation_id=conversation_id,
+                messages=[{'role': m.role, 'content': m.content} for m in request.messages],
+                model=request.model,
                 max_tokens=request.max_tokens,
-                temperature=request.temperature
+                temperature=request.temperature,
+                stream=request.stream,
+                user_id=request.user or api_key
             )
 
-            # Store exchange
-            exchange_text = f"User: {query}\nAssistant: {response_text}"
-            self.memory.add_turn(
-                conversation_id=request.conversation_id,
-                text=exchange_text,
-                metadata={
-                    'user_id': request.user_id,
-                    'model': request.model,
-                    'timestamp': time.time()
+            result = await self.engine.generate(gen_request)
+
+            if not result['success']:
+                logger.error(f"Generation failed: {result.get('error')}")
+                raise HTTPException(status_code=500, detail=result.get('error'))
+
+            self.total_requests += 1
+            tokens = result['metadata']['tokens_generated']
+            self.total_tokens += tokens
+
+            logger.info(f"Response: conv={conversation_id}, tokens={tokens}, latency={result['metadata']['latency_ms']:.1f}ms")
+
+            self._log_usage(api_key or 'anon', tokens, conversation_id)
+
+            response = ChatCompletionResponse(
+                id=f"chatcmpl-{int(time.time())}",
+                created=int(time.time()),
+                model=request.model,
+                choices=[{
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": result['response']
+                    },
+                    "finish_reason": "stop"
+                }],
+                usage={
+                    "prompt_tokens": 0,
+                    "completion_tokens": tokens,
+                    "total_tokens": tokens
                 }
             )
 
-            # Update metrics
-            self.generation_count += 1
-            tokens_generated = len(response_text.split())
-            self.total_tokens_generated += tokens_generated
+            return response
 
-            latency = (time.time() - start_time) * 1000
-
+        @self.app.get("/v1/models")
+        async def list_models():
+            """List models"""
+            model_name = os.getenv("MODEL_NAME", "unknown")
             return {
-                'response': response_text,
-                'conversation_id': request.conversation_id,
-                'metadata': {
-                    'latency_ms': latency,
-                    'tokens_generated': tokens_generated,
-                    'context_retrieved': len(retrieved_context),
-                    'recent_turns_used': len(recent_turns)
+                "object": "list",
+                "data": [{
+                    "id": model_name,
+                    "object": "model",
+                    "created": int(self.start_time),
+                    "owned_by": "infinite-memory"
+                }]
+            }
+
+        @self.app.get("/metrics")
+        async def metrics():
+            """Detailed metrics"""
+            stats = self.engine.get_stats()
+            return {
+                "api_stats": {
+                    "uptime_seconds": time.time() - self.start_time,
+                    "total_requests": self.total_requests,
+                    "total_tokens": self.total_tokens,
+                    "avg_tokens_per_request": (
+                        self.total_tokens / self.total_requests
+                        if self.total_requests > 0 else 0
+                    )
                 },
-                'success': True
+                **stats
             }
 
-        except Exception as e:
-            return {
-                'success': False,
-                'error': str(e),
-                'conversation_id': request.conversation_id
-            }
+    def _extract_api_key(self, authorization: Optional[str]) -> Optional[str]:
+        if not authorization:
+            return None
+        return authorization[7:] if authorization.startswith("Bearer ") else authorization
 
-    async def _call_vllm(self, prompt: str, max_tokens: int, 
-                        temperature: float) -> str:
-        """Call real vLLM engine"""
-        from vllm import SamplingParams
+    def _verify_api_key(self, api_key: Optional[str]) -> bool:
+        if self.api_keys is None:
+            return True
+        return api_key in self.api_keys
 
-        # Create sampling parameters
-        sampling_params = SamplingParams(
-            max_tokens=max_tokens,
-            temperature=temperature,
-            top_p=0.95,
-            stop=["</s>", "User:", "<|eot_id|>"]
-        )
+    def _check_rate_limit(self, api_key: str) -> bool:
+        now = time.time()
 
-        # Generate unique request ID
-        request_id = f"req_{int(time.time() * 1000000)}"
+        if api_key not in self.request_counts:
+            self.request_counts[api_key] = (now, 1)
+            return True
 
-        # Add request to engine
-        self.engine.add_request(
-            request_id=request_id,
-            prompt=prompt,
-            sampling_params=sampling_params
-        )
+        last_reset, count = self.request_counts[api_key]
 
-        # Process until complete
-        final_output = ""
-        while self.engine.has_unfinished_requests():
-            request_outputs = self.engine.step()
+        if now - last_reset >= 60:
+            self.request_counts[api_key] = (now, 1)
+            return True
 
-            for output in request_outputs:
-                if output.request_id == request_id:
-                    if output.finished:
-                        final_output = output.outputs[0].text
-                        break
+        if count >= self.rate_limit:
+            return False
 
-        return final_output
+        self.request_counts[api_key] = (last_reset, count + 1)
+        return True
 
-    def _build_prompt(self, 
-                     messages: List[Dict],
-                     recent_turns: List[str],
-                     retrieved_context: List[Dict]) -> str:
-        """Build prompt with context"""
-        prompt_parts = []
+    def _log_usage(self, api_key: str, tokens: int, conversation_id: str):
+        logger.info(f"BILLING: key={api_key[:8] if len(api_key) >= 8 else api_key}, conv={conversation_id}, tokens={tokens}")
 
-        # Add retrieved context
-        if retrieved_context:
-            prompt_parts.append("# Relevant previous context:")
-            for ctx in retrieved_context[:3]:
-                prompt_parts.append(f"- {ctx['text'][:200]}")
-            prompt_parts.append("")
 
-        # Add recent turns
-        if recent_turns:
-            prompt_parts.append("# Recent conversation:")
-            for turn in recent_turns[-3:]:
-                prompt_parts.append(turn)
-            prompt_parts.append("")
+def create_app():
+    """Create production app with environment configuration"""
+    from vector_db_adapters import create_vector_db
+    from memory_manager import MemoryManager
+    from vllm_wrapper_production import InfiniteMemoryEngine, create_vllm_engine
 
-        # Add current messages
-        prompt_parts.append("# Current query:")
-        for msg in messages:
-            role = msg['role'].capitalize()
-            content = msg['content']
-            prompt_parts.append(f"{role}: {content}")
+    model_name = os.getenv("MODEL_NAME", "meta-llama/Llama-3-70b-chat-hf")
+    quantization = os.getenv("MODEL_QUANTIZATION", "int8")
+    vector_db_backend = os.getenv("VECTOR_DB_BACKEND", "chromadb")
+    cache_capacity = int(os.getenv("CACHE_CAPACITY", "1000"))
+    api_keys_str = os.getenv("API_KEYS", "")
+    api_keys = [k.strip() for k in api_keys_str.split(",") if k.strip()] if api_keys_str else None
 
-        prompt_parts.append("\nAssistant:")
+    logger.info("="*80)
+    logger.info("Initializing Infinite Memory Inference API")
+    logger.info("="*80)
+    logger.info(f"Model: {model_name}")
+    logger.info(f"Quantization: {quantization}")
+    logger.info(f"Vector DB: {vector_db_backend}")
+    logger.info(f"Cache capacity: {cache_capacity}")
+    logger.info(f"API keys: {'Enabled' if api_keys else 'Disabled (development mode)'}")
+    logger.info("")
 
-        return "\n".join(prompt_parts)
+    logger.info("Initializing vector database...")
+    vector_db = create_vector_db(backend=vector_db_backend)
+    logger.info("✅ Vector DB ready")
 
-    def get_stats(self) -> Dict:
-        """Get statistics"""
-        memory_stats = self.memory.get_metrics()
+    logger.info("Initializing memory manager...")
+    memory_manager = MemoryManager(
+        vector_db=vector_db,
+        cache_capacity=cache_capacity,
+        ttl_days=int(os.getenv("TTL_DAYS", "90"))
+    )
+    logger.info("✅ Memory manager ready")
 
-        return {
-            'engine_stats': {
-                'total_generations': self.generation_count,
-                'total_tokens_generated': self.total_tokens_generated,
-                'context_retrievals': self.context_retrievals,
-                'avg_tokens_per_generation': (
-                    self.total_tokens_generated / self.generation_count
-                    if self.generation_count > 0 else 0
-                )
-            },
-            'memory_stats': memory_stats
-        }
+    logger.info("Loading vLLM engine (this may take 30-60 seconds)...")
+    vllm_engine = create_vllm_engine(
+        model_name=model_name,
+        quantization=quantization,
+        gpu_memory_utilization=float(os.getenv("GPU_MEMORY_UTILIZATION", "0.9")),
+        max_model_len=int(os.getenv("MAX_MODEL_LEN", "8192"))
+    )
+    logger.info("✅ vLLM engine ready")
+
+    logger.info("Initializing infinite memory engine...")
+    infinite_engine = InfiniteMemoryEngine(
+        vllm_engine=vllm_engine,
+        memory_manager=memory_manager,
+        max_context_tokens=int(os.getenv("MAX_CONTEXT_TOKENS", "4096")),
+        context_retrieval_k=int(os.getenv("CONTEXT_RETRIEVAL_K", "3"))
+    )
+    logger.info("✅ Infinite memory engine ready")
+
+    logger.info("Initializing API server...")
+    api = InferenceAPI(
+        engine=infinite_engine,
+        api_keys=api_keys,
+        rate_limit=int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
+    )
+    logger.info("✅ API server ready")
+
+    logger.info("="*80)
+    logger.info("🚀 Infinite Memory Inference API Started")
+    logger.info("="*80)
+
+    return api.app
+
+
+if __name__ == "__main__":
+    app = create_app()
+
+    host = os.getenv("API_HOST", "0.0.0.0")
+    port = int(os.getenv("API_PORT", "8000"))
+
+    print()
+    print(f"API available at: http://{host}:{port}")
+    print(f"Docs: http://{host}:{port}/docs")
+    print()
+
+    uvicorn.run(app, host=host, port=port)
