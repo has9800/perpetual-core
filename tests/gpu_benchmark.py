@@ -499,7 +499,7 @@ async def run_all_benchmarks():
 
 
     # Create components
-    vector_db = create_vector_db(backend="chromadb")
+    vector_db = create_vector_db(backend="qdrant")
 
     memory_manager = MemoryManager(
         vector_db=vector_db,
