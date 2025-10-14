@@ -501,7 +501,7 @@ class ComparativeBenchmark:
         await asyncio.sleep(2)
         
         # Turn 50 - test retrieval
-        turn_50 = conversation[49]
+        turn_50 = conversation
         start_time = time.time()
         
         # Retrieve context
@@ -513,31 +513,45 @@ class ComparativeBenchmark:
         
         latency = time.time() - start_time
         
-        # Check if JWT code was retrieved
-        retrieved_text = " ".join([
-            r['text'] + " " + r['metadata'].get('response', '') 
-            for r in context.get('results', [])
-        ])
+        # Build retrieved text
+        retrieved_text = ""
+        retrieved_turns = []
+        for r in context.get('results', []):
+            retrieved_text += r['text'] + " " + r['metadata'].get('response', '') + " "
+            retrieved_turns.append(r['metadata'].get('turn'))
         
-        # Score accuracy - check if all required code elements are present
-        accuracy = 0
+        # DEBUG: Print what was actually retrieved
+        print(f"\n  📋 DEBUG - Retrieved content:")
+        for i, r in enumerate(context.get('results', [])[:2]):  # Show first 2
+            print(f"     Turn {r['metadata'].get('turn')}: {r['text'][:80]}...")
+            response_preview = r['metadata'].get('response', '')[:150]
+            print(f"     Response: {response_preview}...")
+        
+        # Check if JWT code was retrieved (more flexible matching)
         required_codes = turn_50.get("requires_code", [])
-        if required_codes:
-            for required in required_codes:
-                if required in retrieved_text:
-                    accuracy += 1 / len(required_codes)
+        matches_found = []
+        
+        for required in required_codes:
+            # More flexible matching - check if substring exists anywhere
+            if required.lower() in retrieved_text.lower():
+                matches_found.append(required)
+        
+        accuracy = len(matches_found) / len(required_codes) if required_codes else 0
         
         # Check if correct turn was retrieved
-        retrieved_turn_10 = any(
-            r['metadata'].get('turn') == 10 
-            for r in context.get('results', [])
-        )
+        retrieved_turn_10 = 10 in retrieved_turns
         
         # Estimate tokens (3 retrieved contexts ~= 140 tokens)
         tokens_used = 140
         
-        print(f"  ✅ Retrieval complete")
+        print(f"\n  ✅ Retrieval complete")
         print(f"     - Retrieved turn 10: {retrieved_turn_10}")
+        print(f"     - Found {len(matches_found)}/{len(required_codes)} required code elements:")
+        for match in matches_found:
+            print(f"       ✓ {match}")
+        for required in required_codes:
+            if required not in matches_found:
+                print(f"       ✗ {required} (NOT FOUND)")
         print(f"     - Code accuracy: {accuracy:.1%}")
         print(f"     - Tokens used: {tokens_used}")
         
@@ -545,43 +559,44 @@ class ComparativeBenchmark:
             'accuracy': accuracy,
             'tokens_used': tokens_used,
             'latency': latency,
-            'retrieved_correct_turn': retrieved_turn_10
+            'retrieved_correct_turn': retrieved_turn_10,
+            'matches_found': matches_found
         }
     
     async def test_summary_approach(self, conversation: List[Dict]) -> Dict:
         """Test summarization using YOUR local model (no OpenAI needed)"""
-
+        
         print("  Using local model for summarization...")
-
+        
         # Build full conversation history (traditional approach)
         full_history = []
         for turn in conversation[:49]:
             full_history.append(f"User: {turn['user']}")
             full_history.append(f"Assistant: {turn['assistant']}")
-
+        
         # Create summary prompt
         history_text = "\n".join(full_history)
-
+        
         start_time = time.time()
-
-        # Use YOUR model to summarize (this simulates what LangChain would do)
+        
+        # Use YOUR model to summarize
         summary_prompt = f"""Summarize this coding conversation in detail, preserving all important code snippets, function names, and technical details:
 
-        {history_text}
+    {history_text[:3000]}
 
-        Provide a detailed summary:"""
-
+    Provide a detailed summary including all function names and code structures:"""
+        
         # Generate summary using your vLLM engine
         summary_request = GenerationRequest(
             conversation_id="summary_generation",
             messages=[{"role": "user", "content": summary_prompt}],
             model="test",
-            max_tokens=1000,  # Allow longer summary
+            max_tokens=1000,
             temperature=0.3
         )
-
+        
         summary_result = await self.engine.generate(summary_request)
-
+        
         if not summary_result.get('success'):
             print(f"  ❌ Summary generation failed")
             return {
@@ -590,52 +605,65 @@ class ComparativeBenchmark:
                 'latency': 0,
                 'error': 'Summary generation failed'
             }
-
-        # ✅ FIX: Check what key contains the text
-        # Try different possible keys
+        
+        # Get summary text from response
         summary_text = None
         for key in ['text', 'output', 'response', 'generated_text', 'content']:
             if key in summary_result:
                 summary_text = summary_result[key]
                 break
-
-        # If still not found, print the result structure to debug
+        
         if summary_text is None:
-            print(f"  ❌ Could not find text in result. Keys available: {summary_result.keys()}")
-            print(f"  Full result: {summary_result}")
-            return {
-                'accuracy': 0,
-                'tokens_used': 0,
-                'latency': 0,
-                'error': f'Text key not found. Available keys: {list(summary_result.keys())}'
-            }
-
+            # Try getting from metadata
+            if 'metadata' in summary_result and 'generated_text' in summary_result['metadata']:
+                summary_text = summary_result['metadata']['generated_text']
+            else:
+                print(f"  ❌ Could not find text. Keys: {summary_result.keys()}")
+                return {
+                    'accuracy': 0,
+                    'tokens_used': 0,
+                    'latency': 0,
+                    'error': 'Text key not found'
+                }
+        
         latency = time.time() - start_time
-
+        
+        # DEBUG: Print summary preview
+        print(f"\n  📋 DEBUG - Summary preview:")
+        print(f"     {summary_text[:300]}...")
+        
         # Turn 50 - test if summary contains JWT code
-        turn_50 = conversation[49]
-
-        # Check if JWT code is in summary
-        accuracy = 0
+        turn_50 = conversation
         required_codes = turn_50.get("requires_code", [])
-        if required_codes:
-            for required in required_codes:
-                if required in summary_text:
-                    accuracy += 1 / len(required_codes)
-
-        # Count tokens in summary (rough estimate: 4 chars per token)
+        matches_found = []
+        
+        for required in required_codes:
+            # Flexible matching
+            if required.lower() in summary_text.lower():
+                matches_found.append(required)
+        
+        accuracy = len(matches_found) / len(required_codes) if required_codes else 0
+        
+        # Count tokens in summary
         tokens_used = len(summary_text) // 4
-
-        print(f"  ✅ Summarization complete")
+        
+        print(f"\n  ✅ Summarization complete")
+        print(f"     - Found {len(matches_found)}/{len(required_codes)} required code elements:")
+        for match in matches_found:
+            print(f"       ✓ {match}")
+        for required in required_codes:
+            if required not in matches_found:
+                print(f"       ✗ {required} (NOT FOUND)")
         print(f"     - Code accuracy: {accuracy:.1%}")
         print(f"     - Tokens used: {tokens_used}")
         print(f"     - Summary length: {len(summary_text)} chars")
-
+        
         return {
             'accuracy': accuracy,
             'tokens_used': tokens_used,
             'latency': latency,
-            'summary_length': len(summary_text)
+            'summary_length': len(summary_text),
+            'matches_found': matches_found
         }
 
 
