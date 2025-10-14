@@ -1,6 +1,7 @@
 """
 GPU Benchmark Suite for Infinite Memory Inference API
 UPDATED: Realistic semantic retrieval testing + Retrieval vs Summarization comparison
+Uses local model for summarization (no OpenAI API required)
 """
 
 import asyncio
@@ -363,17 +364,18 @@ class RetrievalAccuracyBenchmark:
 
 
 class ComparativeBenchmark:
-    """Compare retrieval vs LangChain summarization for coding tasks"""
+    """Compare retrieval vs summarization for coding tasks - uses local model only"""
     
     def __init__(self, engine, memory):
         self.engine = engine
         self.memory = memory
     
     async def run(self) -> Dict:
-        """Run comparison: Your retrieval vs LangChain summarization"""
+        """Run comparison: Your retrieval vs local model summarization"""
         print("\n" + "="*80)
         print("BENCHMARK 4: RETRIEVAL VS SUMMARIZATION (CODING)")
         print("Compare semantic retrieval vs summary-based memory")
+        print("Using local model for both approaches (no external APIs)")
         print("="*80)
         
         # Generate 50-turn coding conversation
@@ -386,8 +388,8 @@ class ComparativeBenchmark:
         print("Testing retrieval approach...")
         retrieval_result = await self.test_retrieval_approach(coding_conversation)
         
-        # Test 2: LangChain summarization
-        print("\nTesting summarization approach...")
+        # Test 2: Local model summarization
+        print("\nTesting summarization approach (using local model)...")
         summary_result = await self.test_summary_approach(coding_conversation)
         
         # Compare results
@@ -537,72 +539,76 @@ class ComparativeBenchmark:
         }
     
     async def test_summary_approach(self, conversation: List[Dict]) -> Dict:
-        """Test LangChain ConversationSummaryMemory"""
-        try:
-            from langchain.memory import ConversationSummaryMemory
-            from langchain_openai import ChatOpenAI
-            from langchain.chains import ConversationChain
-        except ImportError:
-            print("  ⚠️  LangChain not installed. Install with: pip install langchain langchain-openai")
+        """Test summarization using YOUR local model (no OpenAI needed)"""
+        
+        print("  Using local model for summarization...")
+        
+        # Build full conversation history (traditional approach)
+        full_history = []
+        for turn in conversation[:49]:
+            full_history.append(f"User: {turn['user']}")
+            full_history.append(f"Assistant: {turn['assistant']}")
+        
+        # Create summary prompt
+        history_text = "\n".join(full_history)
+        
+        start_time = time.time()
+        
+        # Use YOUR model to summarize (this simulates what LangChain would do)
+        summary_prompt = f"""Summarize this coding conversation in detail, preserving all important code snippets, function names, and technical details:
+
+{history_text}
+
+Provide a detailed summary:"""
+        
+        # Generate summary using your vLLM engine
+        summary_request = GenerationRequest(
+            conversation_id="summary_generation",
+            messages=[{"role": "user", "content": summary_prompt}],
+            model="test",
+            max_tokens=1000,  # Allow longer summary
+            temperature=0.3
+        )
+        
+        summary_result = await self.engine.generate(summary_request)
+        
+        if not summary_result.get('success'):
+            print(f"  ❌ Summary generation failed")
             return {
                 'accuracy': 0,
                 'tokens_used': 0,
                 'latency': 0,
-                'error': 'LangChain not installed'
+                'error': 'Summary generation failed'
             }
         
-        try:
-            llm = ChatOpenAI(temperature=0, model="gpt-4")
-            memory = ConversationSummaryMemory(llm=llm, return_messages=True)
-            chain = ConversationChain(llm=llm, memory=memory)
-            
-            # Feed turns 1-49
-            start_summary = time.time()
-            for turn in conversation[:49]:
-                chain.predict(input=turn["user"])
-            
-            summary_time = time.time() - start_summary
-            
-            # Turn 50
-            turn_50 = conversation[49]
-            start_inference = time.time()
-            
-            # Get summary
-            memory_vars = memory.load_memory_variables({})
-            summary_text = str(memory_vars)
-            
-            inference_time = time.time() - start_inference
-            total_latency = summary_time + inference_time
-            
-            # Check if JWT code is in summary
-            accuracy = 0
-            required_codes = turn_50.get("requires_code", [])
-            if required_codes:
-                for required in required_codes:
-                    if required in summary_text:
-                        accuracy += 1 / len(required_codes)
-            
-            # Count tokens (rough estimate: 4 chars per token)
-            tokens_used = len(summary_text) // 4
-            
-            print(f"  ✅ Summarization complete")
-            print(f"     - Code accuracy: {accuracy:.1%}")
-            print(f"     - Tokens used: {tokens_used}")
-            
-            return {
-                'accuracy': accuracy,
-                'tokens_used': tokens_used,
-                'latency': total_latency,
-                'summary_length': len(summary_text)
-            }
-        except Exception as e:
-            print(f"  ❌ Summarization error: {e}")
-            return {
-                'accuracy': 0,
-                'tokens_used': 0,
-                'latency': 0,
-                'error': str(e)
-            }
+        summary_text = summary_result['text']
+        latency = time.time() - start_time
+        
+        # Turn 50 - test if summary contains JWT code
+        turn_50 = conversation[49]
+        
+        # Check if JWT code is in summary
+        accuracy = 0
+        required_codes = turn_50.get("requires_code", [])
+        if required_codes:
+            for required in required_codes:
+                if required in summary_text:
+                    accuracy += 1 / len(required_codes)
+        
+        # Count tokens in summary (rough estimate: 4 chars per token)
+        tokens_used = len(summary_text) // 4
+        
+        print(f"  ✅ Summarization complete")
+        print(f"     - Code accuracy: {accuracy:.1%}")
+        print(f"     - Tokens used: {tokens_used}")
+        print(f"     - Summary length: {len(summary_text)} chars")
+        
+        return {
+            'accuracy': accuracy,
+            'tokens_used': tokens_used,
+            'latency': latency,
+            'summary_length': len(summary_text)
+        }
 
 
 async def run_all_benchmarks():

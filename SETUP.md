@@ -22,6 +22,7 @@ pip install python-multipart
 pip install psutil
 pip install qdrant-client
 pip install sentence-transformers
+pip install langchain langchain-openai openai
 
 python3 perpetual-core/tests/gpu_benchmark.py
 ```
