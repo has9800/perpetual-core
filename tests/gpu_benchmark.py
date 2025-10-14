@@ -550,27 +550,27 @@ class ComparativeBenchmark:
     
     async def test_summary_approach(self, conversation: List[Dict]) -> Dict:
         """Test summarization using YOUR local model (no OpenAI needed)"""
-        
+
         print("  Using local model for summarization...")
-        
+
         # Build full conversation history (traditional approach)
         full_history = []
         for turn in conversation[:49]:
             full_history.append(f"User: {turn['user']}")
             full_history.append(f"Assistant: {turn['assistant']}")
-        
+
         # Create summary prompt
         history_text = "\n".join(full_history)
-        
+
         start_time = time.time()
-        
+
         # Use YOUR model to summarize (this simulates what LangChain would do)
         summary_prompt = f"""Summarize this coding conversation in detail, preserving all important code snippets, function names, and technical details:
 
-{history_text}
+        {history_text}
 
-Provide a detailed summary:"""
-        
+        Provide a detailed summary:"""
+
         # Generate summary using your vLLM engine
         summary_request = GenerationRequest(
             conversation_id="summary_generation",
@@ -579,9 +579,9 @@ Provide a detailed summary:"""
             max_tokens=1000,  # Allow longer summary
             temperature=0.3
         )
-        
+
         summary_result = await self.engine.generate(summary_request)
-        
+
         if not summary_result.get('success'):
             print(f"  ❌ Summary generation failed")
             return {
@@ -590,13 +590,31 @@ Provide a detailed summary:"""
                 'latency': 0,
                 'error': 'Summary generation failed'
             }
-        
-        summary_text = summary_result['text']
+
+        # ✅ FIX: Check what key contains the text
+        # Try different possible keys
+        summary_text = None
+        for key in ['text', 'output', 'response', 'generated_text', 'content']:
+            if key in summary_result:
+                summary_text = summary_result[key]
+                break
+
+        # If still not found, print the result structure to debug
+        if summary_text is None:
+            print(f"  ❌ Could not find text in result. Keys available: {summary_result.keys()}")
+            print(f"  Full result: {summary_result}")
+            return {
+                'accuracy': 0,
+                'tokens_used': 0,
+                'latency': 0,
+                'error': f'Text key not found. Available keys: {list(summary_result.keys())}'
+            }
+
         latency = time.time() - start_time
-        
+
         # Turn 50 - test if summary contains JWT code
         turn_50 = conversation[49]
-        
+
         # Check if JWT code is in summary
         accuracy = 0
         required_codes = turn_50.get("requires_code", [])
@@ -604,21 +622,22 @@ Provide a detailed summary:"""
             for required in required_codes:
                 if required in summary_text:
                     accuracy += 1 / len(required_codes)
-        
+
         # Count tokens in summary (rough estimate: 4 chars per token)
         tokens_used = len(summary_text) // 4
-        
+
         print(f"  ✅ Summarization complete")
         print(f"     - Code accuracy: {accuracy:.1%}")
         print(f"     - Tokens used: {tokens_used}")
         print(f"     - Summary length: {len(summary_text)} chars")
-        
+
         return {
             'accuracy': accuracy,
             'tokens_used': tokens_used,
             'latency': latency,
             'summary_length': len(summary_text)
         }
+
 
 
 async def run_all_benchmarks():
