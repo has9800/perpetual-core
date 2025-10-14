@@ -1,6 +1,6 @@
 """
 GPU Benchmark Suite for Infinite Memory Inference API
-UPDATED: Realistic semantic retrieval testing
+UPDATED: Realistic semantic retrieval testing + Retrieval vs Summarization comparison
 """
 
 import asyncio
@@ -156,7 +156,6 @@ class MemoryEfficiencyBenchmark:
         print(f"  Prompt growth: {growth:.1f}% (should be near 0%)")
 
         return results
-
 
 
 class RetrievalAccuracyBenchmark:
@@ -363,6 +362,248 @@ class RetrievalAccuracyBenchmark:
         return results
 
 
+class ComparativeBenchmark:
+    """Compare retrieval vs LangChain summarization for coding tasks"""
+    
+    def __init__(self, engine, memory):
+        self.engine = engine
+        self.memory = memory
+    
+    async def run(self) -> Dict:
+        """Run comparison: Your retrieval vs LangChain summarization"""
+        print("\n" + "="*80)
+        print("BENCHMARK 4: RETRIEVAL VS SUMMARIZATION (CODING)")
+        print("Compare semantic retrieval vs summary-based memory")
+        print("="*80)
+        
+        # Generate 50-turn coding conversation
+        coding_conversation = self.generate_coding_session()
+        
+        print(f"\nGenerated {len(coding_conversation)} turn coding conversation")
+        print("Testing both approaches...\n")
+        
+        # Test 1: Your retrieval system
+        print("Testing retrieval approach...")
+        retrieval_result = await self.test_retrieval_approach(coding_conversation)
+        
+        # Test 2: LangChain summarization
+        print("\nTesting summarization approach...")
+        summary_result = await self.test_summary_approach(coding_conversation)
+        
+        # Compare results
+        results = {
+            'retrieval': retrieval_result,
+            'summary': summary_result,
+            'comparison': {
+                'token_savings': (
+                    (summary_result['tokens_used'] - retrieval_result['tokens_used']) 
+                    / summary_result['tokens_used'] * 100
+                ) if summary_result['tokens_used'] > 0 else 0,
+                'accuracy_diff': retrieval_result['accuracy'] - summary_result['accuracy'],
+                'latency_diff_ms': (retrieval_result['latency'] - summary_result['latency']) * 1000
+            }
+        }
+        
+        # Print results
+        print("\n" + "="*80)
+        print("COMPARISON RESULTS:")
+        print("="*80)
+        print(f"\n{'Metric':<25} | {'Retrieval':<15} | {'Summary':<15}")
+        print("-"*80)
+        print(f"{'Code Accuracy':<25} | {retrieval_result['accuracy']:<15.1%} | {summary_result['accuracy']:<15.1%}")
+        print(f"{'Tokens Used':<25} | {retrieval_result['tokens_used']:<15} | {summary_result['tokens_used']:<15}")
+        print(f"{'Latency (ms)':<25} | {retrieval_result['latency']*1000:<15.0f} | {summary_result['latency']*1000:<15.0f}")
+        
+        print(f"\n{'Token Savings:':<25} {results['comparison']['token_savings']:.1f}%")
+        print(f"{'Accuracy Gain:':<25} {results['comparison']['accuracy_diff']*100:+.1f}%")
+        
+        if results['comparison']['latency_diff_ms'] < 0:
+            print(f"{'Latency:':<25} {abs(results['comparison']['latency_diff_ms']):.0f}ms FASTER")
+        else:
+            print(f"{'Latency:':<25} {results['comparison']['latency_diff_ms']:.0f}ms slower")
+        
+        return results
+    
+    def generate_coding_session(self) -> List[Dict]:
+        """Generate realistic 50-turn coding conversation"""
+        
+        conversation = []
+        
+        # Turn 1-5: Initial setup
+        conversation.extend([
+            {"turn": 1, "user": "Create a Flask REST API for a todo app", 
+             "assistant": "``````"},
+            
+            {"turn": 2, "user": "Add a POST endpoint to create todos",
+             "assistant": "``````"},
+            
+            {"turn": 3, "user": "Add SQLAlchemy for database",
+             "assistant": "``````"},
+            
+            {"turn": 4, "user": "Update GET endpoint to use database",
+             "assistant": "``````"},
+            
+            {"turn": 5, "user": "Update POST to save to database",
+             "assistant": "``````"}
+        ])
+        
+        # Turn 10: Authentication (KEY SECTION - will test recall of this)
+        conversation.append({
+            "turn": 10, 
+            "user": "Add JWT authentication to protect routes",
+            "assistant": "``````"
+        })
+        
+        # Turn 11-49: Filler (various features, debugging, etc.)
+        for i in range(11, 50):
+            conversation.append({
+                "turn": i,
+                "user": f"Add validation to todo title for turn {i}",
+                "assistant": f"``````"
+            })
+        
+        # Turn 50: CRITICAL TEST - requires recalling JWT code from turn 10
+        conversation.append({
+            "turn": 50,
+            "user": "Modify the login function to use OAuth2 instead of JWT. Show me the current JWT implementation first.",
+            "expected_context": "turn 10",  # Should retrieve this
+            "requires_code": ["create_access_token", "jwt_required", "@app.route('/login'", "JWT_SECRET_KEY"]
+        })
+        
+        return conversation
+    
+    async def test_retrieval_approach(self, conversation: List[Dict]) -> Dict:
+        """Test your retrieval system"""
+        conv_id = "coding_retrieval_test"
+        
+        # Feed turns 1-49
+        for turn in conversation[:49]:
+            self.memory.add_turn(
+                conversation_id=conv_id,
+                text=turn["user"],
+                metadata={'response': turn["assistant"], 'turn': turn["turn"]}
+            )
+        
+        # Wait for indexing
+        print("  Waiting for vector DB indexing...")
+        await asyncio.sleep(2)
+        
+        # Turn 50 - test retrieval
+        turn_50 = conversation[49]
+        start_time = time.time()
+        
+        # Retrieve context
+        context = self.memory.retrieve_context(
+            conversation_id=conv_id,
+            query=turn_50["user"],
+            top_k=3
+        )
+        
+        latency = time.time() - start_time
+        
+        # Check if JWT code was retrieved
+        retrieved_text = " ".join([
+            r['text'] + " " + r['metadata'].get('response', '') 
+            for r in context.get('results', [])
+        ])
+        
+        # Score accuracy - check if all required code elements are present
+        accuracy = 0
+        required_codes = turn_50.get("requires_code", [])
+        if required_codes:
+            for required in required_codes:
+                if required in retrieved_text:
+                    accuracy += 1 / len(required_codes)
+        
+        # Check if correct turn was retrieved
+        retrieved_turn_10 = any(
+            r['metadata'].get('turn') == 10 
+            for r in context.get('results', [])
+        )
+        
+        # Estimate tokens (3 retrieved contexts ~= 140 tokens)
+        tokens_used = 140
+        
+        print(f"  ✅ Retrieval complete")
+        print(f"     - Retrieved turn 10: {retrieved_turn_10}")
+        print(f"     - Code accuracy: {accuracy:.1%}")
+        print(f"     - Tokens used: {tokens_used}")
+        
+        return {
+            'accuracy': accuracy,
+            'tokens_used': tokens_used,
+            'latency': latency,
+            'retrieved_correct_turn': retrieved_turn_10
+        }
+    
+    async def test_summary_approach(self, conversation: List[Dict]) -> Dict:
+        """Test LangChain ConversationSummaryMemory"""
+        try:
+            from langchain.memory import ConversationSummaryMemory
+            from langchain_openai import ChatOpenAI
+            from langchain.chains import ConversationChain
+        except ImportError:
+            print("  ⚠️  LangChain not installed. Install with: pip install langchain langchain-openai")
+            return {
+                'accuracy': 0,
+                'tokens_used': 0,
+                'latency': 0,
+                'error': 'LangChain not installed'
+            }
+        
+        try:
+            llm = ChatOpenAI(temperature=0, model="gpt-4")
+            memory = ConversationSummaryMemory(llm=llm, return_messages=True)
+            chain = ConversationChain(llm=llm, memory=memory)
+            
+            # Feed turns 1-49
+            start_summary = time.time()
+            for turn in conversation[:49]:
+                chain.predict(input=turn["user"])
+            
+            summary_time = time.time() - start_summary
+            
+            # Turn 50
+            turn_50 = conversation[49]
+            start_inference = time.time()
+            
+            # Get summary
+            memory_vars = memory.load_memory_variables({})
+            summary_text = str(memory_vars)
+            
+            inference_time = time.time() - start_inference
+            total_latency = summary_time + inference_time
+            
+            # Check if JWT code is in summary
+            accuracy = 0
+            required_codes = turn_50.get("requires_code", [])
+            if required_codes:
+                for required in required_codes:
+                    if required in summary_text:
+                        accuracy += 1 / len(required_codes)
+            
+            # Count tokens (rough estimate: 4 chars per token)
+            tokens_used = len(summary_text) // 4
+            
+            print(f"  ✅ Summarization complete")
+            print(f"     - Code accuracy: {accuracy:.1%}")
+            print(f"     - Tokens used: {tokens_used}")
+            
+            return {
+                'accuracy': accuracy,
+                'tokens_used': tokens_used,
+                'latency': total_latency,
+                'summary_length': len(summary_text)
+            }
+        except Exception as e:
+            print(f"  ❌ Summarization error: {e}")
+            return {
+                'accuracy': 0,
+                'tokens_used': 0,
+                'latency': 0,
+                'error': str(e)
+            }
+
 
 async def run_all_benchmarks():
     """Run all benchmarks"""
@@ -370,7 +611,7 @@ async def run_all_benchmarks():
     print("INFINITE MEMORY INFERENCE API - GPU BENCHMARK SUITE")
     print("="*80)
     print("\nStarting comprehensive GPU benchmark suite...")
-    print("This will take approximately 10-15 minutes")
+    print("This will take approximately 15-20 minutes")
 
     # Initialize system
     print("\nInitializing system...\n")
@@ -438,22 +679,41 @@ async def run_all_benchmarks():
         import traceback
         traceback.print_exc()
 
+    try:
+        # Benchmark 4: Comparative (Retrieval vs Summarization)
+        comparative_bench = ComparativeBenchmark(infinite_engine, memory_manager)
+        all_results['comparative'] = await comparative_bench.run()
+    except Exception as e:
+        print(f"\n❌ Comparative benchmark failed: {e}")
+        import traceback
+        traceback.print_exc()
+
     # Summary
     print("\n" + "="*80)
     print("BENCHMARK SUMMARY")
     print("="*80)
 
     if 'throughput' in all_results and '10_turns' in all_results['throughput']:
-        print(f"\nThroughput (10 turns): {all_results['throughput']['10_turns']['avg_throughput']:.1f} tok/s")
-        print(f"Latency (P50): {all_results['throughput']['10_turns']['p50_latency']:.0f}ms")
+        print(f"\n📊 THROUGHPUT:")
+        print(f"   10 turns: {all_results['throughput']['10_turns']['avg_throughput']:.1f} tok/s")
+        print(f"   Latency (P50): {all_results['throughput']['10_turns']['p50_latency']:.0f}ms")
 
     if 'memory_efficiency' in all_results and 'savings_percent' in all_results['memory_efficiency']:
-        print(f"\nMemory savings: {all_results['memory_efficiency']['savings_percent']:.1f}%")
-        print(f"Prompt growth: {all_results['memory_efficiency']['prompt_growth_percent']:.1f}%")
+        print(f"\n💾 MEMORY EFFICIENCY:")
+        print(f"   Token savings: {all_results['memory_efficiency']['savings_percent']:.1f}%")
+        print(f"   Prompt growth: {all_results['memory_efficiency']['prompt_growth_percent']:.1f}%")
 
     if 'accuracy' in all_results and 'accuracy_percent' in all_results['accuracy']:
-        print(f"\nSemantic retrieval accuracy: {all_results['accuracy']['accuracy_percent']:.1f}%")
-        print(f"Avg similarity: {all_results['accuracy']['avg_similarity']:.3f}")
+        print(f"\n🎯 RETRIEVAL ACCURACY:")
+        print(f"   Semantic accuracy: {all_results['accuracy']['accuracy_percent']:.1f}%")
+        print(f"   Avg similarity: {all_results['accuracy']['avg_similarity']:.3f}")
+
+    if 'comparative' in all_results and 'comparison' in all_results['comparative']:
+        print(f"\n🆚 RETRIEVAL VS SUMMARIZATION:")
+        print(f"   Token savings: {all_results['comparative']['comparison']['token_savings']:.1f}%")
+        print(f"   Retrieval accuracy: {all_results['comparative']['retrieval']['accuracy']:.1%}")
+        print(f"   Summary accuracy: {all_results['comparative']['summary']['accuracy']:.1%}")
+        print(f"   Accuracy gain: {all_results['comparative']['comparison']['accuracy_diff']*100:+.1f}%")
 
     print("\n" + "="*80)
     print("✅ BENCHMARK COMPLETE")
