@@ -428,51 +428,61 @@ class ComparativeBenchmark:
     
     def generate_coding_session(self) -> List[Dict]:
         """Generate realistic 50-turn coding conversation"""
-        
+
         conversation = []
-        
+
         # Turn 1-5: Initial setup
         conversation.extend([
             {"turn": 1, "user": "Create a Flask REST API for a todo app", 
-             "assistant": "``````"},
+                "assistant": "``````"},
             
             {"turn": 2, "user": "Add a POST endpoint to create todos",
-             "assistant": "``````"},
+                "assistant": "``````"},
             
             {"turn": 3, "user": "Add SQLAlchemy for database",
-             "assistant": "``````"},
+                "assistant": "``````"},
             
             {"turn": 4, "user": "Update GET endpoint to use database",
-             "assistant": "``````"},
+                "assistant": "``````"},
             
             {"turn": 5, "user": "Update POST to save to database",
-             "assistant": "``````"}
+                "assistant": "``````"}
         ])
-        
-        # Turn 10: Authentication (KEY SECTION - will test recall of this)
+
+        # Turn 6-9: More features (FILL THE GAP)
+        for i in range(6, 10):
+            conversation.append({
+                "turn": i,
+                "user": f"Add DELETE endpoint for todos",
+                "assistant": f"``````"
+            })
+
+        # Turn 10: Authentication (KEY SECTION)
         conversation.append({
             "turn": 10, 
             "user": "Add JWT authentication to protect routes",
             "assistant": "``````"
         })
-        
-        # Turn 11-49: Filler (various features, debugging, etc.)
+
+        # Turn 11-49: Filler
         for i in range(11, 50):
             conversation.append({
                 "turn": i,
                 "user": f"Add validation to todo title for turn {i}",
                 "assistant": f"``````"
             })
-        
-        # Turn 50: CRITICAL TEST - requires recalling JWT code from turn 10
+
+        # Turn 50: CRITICAL TEST - ✅ NOW HAS "assistant" KEY
         conversation.append({
             "turn": 50,
-            "user": "Modify the login function to use OAuth2 instead of JWT. Show me the current JWT implementation first.",
-            "expected_context": "turn 10",  # Should retrieve this
+            "user": "Show me the JWT login function we created earlier",
+            "assistant": "Let me retrieve that for you...",  # ✅ ADDED THIS
+            "expected_context": "turn 10",
             "requires_code": ["create_access_token", "jwt_required", "@app.route('/login'", "JWT_SECRET_KEY"]
         })
-        
+
         return conversation
+
     
     async def test_retrieval_approach(self, conversation: List[Dict]) -> Dict:
         """Test your retrieval system"""
