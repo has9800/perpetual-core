@@ -564,89 +564,89 @@ class ComparativeBenchmark:
         # Use YOUR model to summarize
         summary_prompt = f"""Summarize this coding conversation in detail, preserving all important code snippets, function names, and technical details:
 
-        {history_text[:3000]}
+    {history_text[:3000]}
 
-        Provide a detailed summary including all function names and code structures:"""
-            
-            # Generate summary using your vLLM engine
-            summary_request = GenerationRequest(
-                conversation_id="summary_generation",
-                messages=[{"role": "user", "content": summary_prompt}],
-                model="test",
-                max_tokens=1000,
-                temperature=0.3
-            )
-            
-            summary_result = await self.engine.generate(summary_request)
-            
-            if not summary_result.get('success'):
-                print(f"  ❌ Summary generation failed")
+    Provide a detailed summary including all function names and code structures:"""
+        
+        # Generate summary using your vLLM engine
+        summary_request = GenerationRequest(
+            conversation_id="summary_generation",
+            messages=[{"role": "user", "content": summary_prompt}],
+            model="test",
+            max_tokens=1000,
+            temperature=0.3
+        )
+        
+        summary_result = await self.engine.generate(summary_request)
+        
+        if not summary_result.get('success'):
+            print(f"  ❌ Summary generation failed")
+            return {
+                'accuracy': 0,
+                'tokens_used': 0,
+                'latency': 0,
+                'error': 'Summary generation failed'
+            }
+        
+        # Get summary text from response
+        summary_text = None
+        for key in ['text', 'output', 'response', 'generated_text', 'content']:
+            if key in summary_result:
+                summary_text = summary_result[key]
+                break
+        
+        if summary_text is None:
+            # Try getting from metadata
+            if 'metadata' in summary_result and 'generated_text' in summary_result['metadata']:
+                summary_text = summary_result['metadata']['generated_text']
+            else:
+                print(f"  ❌ Could not find text. Keys: {summary_result.keys()}")
                 return {
                     'accuracy': 0,
                     'tokens_used': 0,
                     'latency': 0,
-                    'error': 'Summary generation failed'
+                    'error': 'Text key not found'
                 }
-            
-            # Get summary text from response
-            summary_text = None
-            for key in ['text', 'output', 'response', 'generated_text', 'content']:
-                if key in summary_result:
-                    summary_text = summary_result[key]
-                    break
-            
-            if summary_text is None:
-                # Try getting from metadata
-                if 'metadata' in summary_result and 'generated_text' in summary_result['metadata']:
-                    summary_text = summary_result['metadata']['generated_text']
-                else:
-                    print(f"  ❌ Could not find text. Keys: {summary_result.keys()}")
-                    return {
-                        'accuracy': 0,
-                        'tokens_used': 0,
-                        'latency': 0,
-                        'error': 'Text key not found'
-                    }
-            
-            latency = time.time() - start_time
-            
-            # DEBUG: Print summary preview
-            print(f"\n  📋 DEBUG - Summary preview:")
-            print(f"     {summary_text[:300]}...")
-            
-            # Turn 50 - test if summary contains JWT code
-            turn_50 = conversation
-            required_codes = turn_50.get("requires_code", [])
-            matches_found = []
-            
-            for required in required_codes:
-                # Flexible matching
-                if required.lower() in summary_text.lower():
-                    matches_found.append(required)
-            
-            accuracy = len(matches_found) / len(required_codes) if required_codes else 0
-            
-            # Count tokens in summary
-            tokens_used = len(summary_text) // 4
-            
-            print(f"\n  ✅ Summarization complete")
-            print(f"     - Found {len(matches_found)}/{len(required_codes)} required code elements:")
-            for match in matches_found:
-                print(f"       ✓ {match}")
-            for required in required_codes:
-                if required not in matches_found:
-                    print(f"       ✗ {required} (NOT FOUND)")
-            print(f"     - Code accuracy: {accuracy:.1%}")
-            print(f"     - Tokens used: {tokens_used}")
-            print(f"     - Summary length: {len(summary_text)} chars")
-            
-            return {
-                'accuracy': accuracy,
-                'tokens_used': tokens_used,
-                'latency': latency,
-                'summary_length': len(summary_text),
-                'matches_found': matches_found
-            }
+        
+        latency = time.time() - start_time
+        
+        # DEBUG: Print summary preview
+        print(f"\n  📋 DEBUG - Summary preview:")
+        print(f"     {summary_text[:300]}...")
+        
+        # Turn 50 - test if summary contains JWT code
+        turn_50 = conversation
+        required_codes = turn_50.get("requires_code", [])
+        matches_found = []
+        
+        for required in required_codes:
+            # Flexible matching
+            if required.lower() in summary_text.lower():
+                matches_found.append(required)
+        
+        accuracy = len(matches_found) / len(required_codes) if required_codes else 0
+        
+        # Count tokens in summary
+        tokens_used = len(summary_text) // 4
+        
+        print(f"\n  ✅ Summarization complete")
+        print(f"     - Found {len(matches_found)}/{len(required_codes)} required code elements:")
+        for match in matches_found:
+            print(f"       ✓ {match}")
+        for required in required_codes:
+            if required not in matches_found:
+                print(f"       ✗ {required} (NOT FOUND)")
+        print(f"     - Code accuracy: {accuracy:.1%}")
+        print(f"     - Tokens used: {tokens_used}")
+        print(f"     - Summary length: {len(summary_text)} chars")
+        
+        return {
+            'accuracy': accuracy,
+            'tokens_used': tokens_used,
+            'latency': latency,
+            'summary_length': len(summary_text),
+            'matches_found': matches_found
+        }
 
 async def run_all_benchmarks():
     """Run all benchmarks"""
