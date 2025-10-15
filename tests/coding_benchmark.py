@@ -212,32 +212,32 @@ Provide the modified code:"""
         """Test summary-based context (traditional approach)"""
         
         # Simulate hitting context limit at turn 40
-        # Summarize turns 1-40, keep recent turns 41-49
         print("Simulating context window filling up...")
-        print("Summarizing turns 1-40 (traditional approach when hitting token limit)...")
+        print("Summarizing turns 1-40 (includes turn 10 with JWT code)...")
         
-        # Build history to summarize
+        # Build history to summarize - make sure turn 10 is included
         history_to_summarize = []
         for turn in turns[:40]:
             history_to_summarize.append(f"Turn {turn['turn']}: {turn['user']}")
-            history_to_summarize.append(f"Response: {turn['assistant']}")
+            history_to_summarize.append(f"Assistant: {turn['assistant']}")
         
         history_text = "\n".join(history_to_summarize)
         
-        # Generate summary
-        summary_prompt = f"""Summarize this coding conversation, preserving key technical details:
+        # STRONG summary prompt emphasizing code preservation
+        summary_prompt = f"""You must create a detailed technical summary of this coding conversation. 
+    Preserve ALL function names, imports, routes, configuration values, and code snippets EXACTLY.
 
-{history_text[:3000]}
+    {history_text[:3500]}
 
-Summary:"""
+    Technical summary with all code details:"""
         
         start = time.time()
         request = GenerationRequest(
             conversation_id=f"summary_{time.time()}",
             messages=[{"role": "user", "content": summary_prompt}],
             model="test",
-            max_tokens=600,
-            temperature=0.3
+            max_tokens=800,  # More tokens for detailed summary
+            temperature=0.1   # Lower temp for factual recall
         )
         
         result = await self.engine.generate(request)
@@ -250,8 +250,21 @@ Summary:"""
         summary = result.get('response') or result.get('text') or ""
         summary_tokens = len(summary) // 4
         
-        print(f"  Summary generated ({summary_tokens} tokens)")
-        print(f"  Summary preview: {summary[:150]}...")
+        print(f"\n  📝 SUMMARY GENERATED ({summary_tokens} tokens)")
+        print(f"  Preview: {summary[:250]}...")
+        
+        # CHECK: Does summary contain JWT elements?
+        print(f"\n  🔍 Checking if summary preserved JWT code:")
+        jwt_in_summary = 0
+        for elem in self.jwt_elements:
+            found = elem in summary
+            status = "✓" if found else "✗"
+            print(f"     {status} {elem}: {'IN SUMMARY' if found else 'LOST IN SUMMARY'}")
+            if found:
+                jwt_in_summary += 1
+        
+        summary_has_code = jwt_in_summary / len(self.jwt_elements)
+        print(f"  Summary preserved {jwt_in_summary}/{len(self.jwt_elements)} JWT elements ({summary_has_code:.1%})")
         
         # Build context: summary + recent turns
         context_text = f"Summary of earlier conversation (turns 1-40):\n{summary}\n\n"
@@ -261,17 +274,17 @@ Summary:"""
         
         context_tokens = len(context_text) // 4
         
-        print(f"  Total context: ~{context_tokens} tokens (summary + recent turns)")
+        print(f"\n  Context built: ~{context_tokens} tokens (summary + recent)")
         
         # Ask model to answer with this context
-        print("Generating answer with summarized context...")
+        print("  Generating answer with summarized context...")
         prompt = f"""Based on this coding conversation context:
 
-{context_text}
+    {context_text}
 
-User asks: {user_query}
+    User asks: {user_query}
 
-Provide the modified code:"""
+    Provide the modified code:"""
         
         start = time.time()
         request = GenerationRequest(
@@ -287,7 +300,13 @@ Provide the modified code:"""
         
         if not result.get('success'):
             print("  ❌ Answer generation failed")
-            return {'accuracy': 0, 'tokens': context_tokens, 'latency': summary_time, 'found': 0}
+            return {
+                'accuracy': 0, 
+                'tokens': context_tokens, 
+                'latency': summary_time, 
+                'found': 0,
+                'summary_preserved': summary_has_code
+            }
         
         answer = result.get('response') or result.get('text') or ""
         
@@ -306,8 +325,10 @@ Provide the modified code:"""
             'summary_latency': summary_time,
             'generation_latency': generation_time,
             'total_latency': summary_time + generation_time,
-            'found_elements': found
+            'found_elements': found,
+            'summary_preserved': summary_has_code  # NEW: track what summary kept
         }
+
     
     def _print_comparison(self, retrieval: Dict, summary: Dict):
         """Print comparison results"""
@@ -320,7 +341,11 @@ Provide the modified code:"""
         print(f"{'Code Accuracy':<30} | {retrieval['accuracy']:<15.1%} | {summary['accuracy']:<15.1%}")
         print(f"{'Context Tokens':<30} | {retrieval['context_tokens']:<15} | {summary['context_tokens']:<15}")
         print(f"{'Total Latency (ms)':<30} | {retrieval['total_latency']*1000:<15.0f} | {summary['total_latency']*1000:<15.0f}")
-        print(f"{'Elements Found':<30} | {retrieval['found_elements']}/{len(self.jwt_elements):<14} | {summary['found_elements']}/{len(self.jwt_elements):<14}")
+        print(f"{'Elements Found in Answer':<30} | {retrieval['found_elements']}/{len(self.jwt_elements):<14} | {summary['found_elements']}/{len(self.jwt_elements):<14}")
+        
+        # NEW: Show summary preservation
+        if 'summary_preserved' in summary:
+            print(f"{'Elements in Summary':<30} | {'N/A':<15} | {summary['summary_preserved']:<15.1%}")
         
         # Calculate improvements
         token_savings = ((summary['context_tokens'] - retrieval['context_tokens']) 
@@ -338,10 +363,20 @@ Provide the modified code:"""
         else:
             print(f"✗  Retrieval did NOT retrieve turn 10")
         
+        # NEW: Explain why summarization failed
+        if 'summary_preserved' in summary:
+            if summary['summary_preserved'] < 0.5:
+                print(f"\n⚠️  CRITICAL: Summary lost {(1-summary['summary_preserved'])*100:.0f}% of code details")
+                print(f"   This is why summarization fails for coding tasks")
+            elif summary['accuracy'] < 0.5 and summary['summary_preserved'] >= 0.5:
+                print(f"\n⚠️  Summary preserved code BUT model couldn't use it effectively")
+                print(f"   Retrieval provides clearer, more direct context")
+        
         print(f"\n📊 Why this matters for coding agents:")
         print(f"   - Coding needs EXACT code, not summaries")
         print(f"   - Summarization loses variable names, function signatures")
         print(f"   - Retrieval maintains code fidelity across long sessions")
+
 
 
 async def main():
