@@ -457,11 +457,14 @@ class ComparativeBenchmark:
             })
         
         # Turn 10: JWT Authentication (KEY TURN)
+        # Turn 50: Test query
         conversation.append({
-            "turn": 10,
-            "user": "Add JWT authentication with login and token generation",
-            "assistant": "``````"
+            "turn": 50,
+            "user": "Show me the JWT authentication code with create_access_token and login function",  # BETTER MATCH
+            "assistant": "Let me retrieve that",
+            "requires_code": ["create_access_token", "jwt_required", "login", "JWT_SECRET_KEY"]
         })
+
         
         # Turns 11-49: Filler
         for i in range(11, 50):
