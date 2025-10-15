@@ -1,9 +1,6 @@
 """
 Standalone Coding Benchmark: Retrieval vs Summarization
-Run independently to test code recall performance
-
-Usage:
-    python coding_benchmark.py
+Tests across multiple difficulty levels for fairness
 """
 
 import asyncio
@@ -21,7 +18,7 @@ from vllm_wrapper_production import InfiniteMemoryEngine, create_vllm_engine, Ge
 
 
 class CodingBenchmark:
-    """Compare retrieval vs summarization for coding conversations"""
+    """Compare retrieval vs summarization across multiple test scenarios"""
     
     def __init__(self, engine: InfiniteMemoryEngine, memory: MemoryManager):
         self.engine = engine
@@ -51,44 +48,69 @@ def create_todo():
     db.session.commit()
     return jsonify({'id': todo.id, 'title': todo.title}), 201"""
         
-        # What we're looking for in the retrieval
+        # What we're looking for
         self.jwt_elements = ['create_access_token', 'jwt_required', 'login', 'JWT_SECRET_KEY']
+        
+        # Test scenarios with varying difficulty
+        self.test_scenarios = [
+            {
+                'name': 'Easy: Direct keyword match',
+                'query': 'Show me the JWT login code from earlier',
+                'expected_difficulty': 0.9  # Should get 90%+ accuracy
+            },
+            {
+                'name': 'Medium: Semantic understanding',
+                'query': 'How do we secure the API endpoints?',
+                'expected_difficulty': 0.7  # Should get 70%+ accuracy
+            },
+            {
+                'name': 'Hard: Conceptual recall',
+                'query': 'What prevents unauthorized users from accessing protected routes?',
+                'expected_difficulty': 0.5  # Should get 50%+ accuracy
+            }
+        ]
     
     async def run(self) -> Dict:
-        """Run the benchmark"""
+        """Run benchmark across all scenarios"""
         print("\n" + "="*80)
         print("CODING BENCHMARK: Retrieval vs Summarization")
+        print("Testing across multiple difficulty levels")
         print("="*80)
         
-        # Generate conversation
-        turns = self._generate_turns()
-        print(f"Generated {len(turns)} conversation turns\n")
+        all_results = []
         
-        # Test retrieval
-        print("1. Testing RETRIEVAL approach...")
-        retrieval_result = await self._test_retrieval(turns)
+        for scenario in self.test_scenarios:
+            print(f"\n{'='*80}")
+            print(f"SCENARIO: {scenario['name']}")
+            print(f"Query: '{scenario['query']}'")
+            print(f"{'='*80}")
+            
+            # Generate conversation for this scenario
+            turns = self._generate_turns(scenario['query'])
+            
+            # Test retrieval
+            print("\n1. Testing RETRIEVAL...")
+            retrieval_result = await self._test_retrieval(turns)
+            
+            # Test summarization
+            print("\n2. Testing SUMMARIZATION...")
+            summary_result = await self._test_summarization(turns)
+            
+            # Store results
+            all_results.append({
+                'scenario': scenario['name'],
+                'query': scenario['query'],
+                'retrieval': retrieval_result,
+                'summarization': summary_result
+            })
         
-        # Test summarization
-        print("\n2. Testing SUMMARIZATION approach...")
-        summary_result = await self._test_summarization(turns)
+        # Print aggregate results
+        self._print_aggregate_results(all_results)
         
-        # Calculate comparison
-        token_savings = 0
-        if summary_result['tokens'] > 0:
-            token_savings = ((summary_result['tokens'] - retrieval_result['tokens']) 
-                           / summary_result['tokens'] * 100)
-        
-        # Print results
-        self._print_results(retrieval_result, summary_result, token_savings)
-        
-        return {
-            'retrieval': retrieval_result,
-            'summarization': summary_result,
-            'token_savings_percent': token_savings
-        }
+        return {'scenarios': all_results}
     
-    def _generate_turns(self) -> List[Dict]:
-        """Generate 50-turn conversation with JWT code at turn 10"""
+    def _generate_turns(self, turn_50_query: str) -> List[Dict]:
+        """Generate 50-turn conversation"""
         turns = []
         
         for i in range(50):
@@ -101,9 +123,9 @@ def create_todo():
                     'assistant': self.jwt_code
                 })
             elif turn_num == 50:
-                # The test query at the end
+                # The test query (varies by scenario)
                 turns.append({
-                    'user': 'Show me the JWT login code from earlier',
+                    'user': turn_50_query,
                     'assistant': 'placeholder'
                 })
             else:
@@ -117,7 +139,7 @@ def create_todo():
     
     async def _test_retrieval(self, turns: List[Dict]) -> Dict:
         """Test retrieval approach"""
-        conv_id = "retrieval_test"
+        conv_id = f"retrieval_test_{time.time()}"  # Unique ID per test
         
         # Store first 49 turns
         for i in range(49):
@@ -127,8 +149,7 @@ def create_todo():
                 metadata={'response': turns[i]['assistant']}
             )
         
-        # Wait for Qdrant indexing
-        print("   Waiting for vector DB indexing...")
+        # Wait for indexing
         await asyncio.sleep(2)
         
         # Query with turn 50
@@ -148,11 +169,8 @@ def create_todo():
         found = sum(1 for elem in self.jwt_elements if elem in retrieved_text)
         accuracy = found / len(self.jwt_elements)
         
-        print(f"   ✅ Retrieval complete")
         print(f"   Found {found}/{len(self.jwt_elements)} JWT elements")
         print(f"   Accuracy: {accuracy:.1%}")
-        print(f"   Latency: {latency*1000:.0f}ms")
-        print(f"   Tokens: ~140")
         
         return {
             'accuracy': accuracy,
@@ -172,7 +190,7 @@ def create_todo():
         
         history_text = "\n".join(history_parts)
         
-        # Truncate if too long (avoid context overflow)
+        # Truncate if too long
         if len(history_text) > 2500:
             history_text = history_text[:2500]
         
@@ -180,10 +198,9 @@ def create_todo():
         prompt = f"Summarize this coding conversation, keeping all technical details:\n\n{history_text}\n\nSummary:"
         
         # Generate summary
-        print("   Generating summary with local model...")
         start = time.time()
         request = GenerationRequest(
-            conversation_id="summary_test",
+            conversation_id=f"summary_test_{time.time()}",
             messages=[{"role": "user", "content": prompt}],
             model="test",
             max_tokens=500,
@@ -194,39 +211,12 @@ def create_todo():
         latency = time.time() - start
         
         if not result.get('success'):
-            print("   ❌ Summary generation failed")
             return {'accuracy': 0, 'tokens': 0, 'latency': latency, 'found_elements': 0}
         
-        # DEBUG: Print what keys are in result
-        print(f"   DEBUG: Result keys: {result.keys()}")
-        
-        # Extract summary text - try all possible locations
-        summary = None
-        
-        # Try direct keys
-        for key in ['text', 'output', 'response', 'content', 'generated_text']:
-            if key in result and result[key]:
-                summary = result[key]
-                print(f"   DEBUG: Found summary in result['{key}']")
-                break
-        
-        # Try metadata
+        # Extract summary
+        summary = result.get('response', '') or result.get('text', '')
         if not summary and 'metadata' in result:
-            print(f"   DEBUG: Metadata keys: {result['metadata'].keys()}")
-            for key in ['text', 'generated_text', 'output', 'response']:
-                if key in result['metadata'] and result['metadata'][key]:
-                    summary = result['metadata'][key]
-                    print(f"   DEBUG: Found summary in metadata['{key}']")
-                    break
-        
-        # If still not found, print full result structure
-        if not summary:
-            print(f"   ❌ Could not find summary text!")
-            print(f"   DEBUG: Full result: {result}")
-            return {'accuracy': 0, 'tokens': 0, 'latency': latency, 'found_elements': 0}
-        
-        # Show preview
-        print(f"   DEBUG: Summary preview: {summary[:200]}...")
+            summary = result['metadata'].get('generated_text', '')
         
         # Calculate accuracy
         found = sum(1 for elem in self.jwt_elements if elem.lower() in summary.lower())
@@ -234,11 +224,8 @@ def create_todo():
         
         tokens = len(summary) // 4
         
-        print(f"   ✅ Summarization complete")
         print(f"   Found {found}/{len(self.jwt_elements)} JWT elements")
         print(f"   Accuracy: {accuracy:.1%}")
-        print(f"   Latency: {latency*1000:.0f}ms")
-        print(f"   Tokens: ~{tokens}")
         
         return {
             'accuracy': accuracy,
@@ -246,70 +233,68 @@ def create_todo():
             'latency': latency,
             'found_elements': found
         }
-
     
-    def _print_results(self, retrieval: Dict, summary: Dict, savings: float):
-        """Print comparison results"""
+    def _print_aggregate_results(self, all_results: List[Dict]):
+        """Print results across all scenarios"""
         print("\n" + "="*80)
-        print("RESULTS")
+        print("AGGREGATE RESULTS ACROSS ALL SCENARIOS")
         print("="*80)
-        print(f"\n{'Metric':<20} | {'Retrieval':<15} | {'Summarization':<15}")
+        
+        # Calculate averages
+        avg_retrieval_acc = sum(r['retrieval']['accuracy'] for r in all_results) / len(all_results)
+        avg_summary_acc = sum(r['summarization']['accuracy'] for r in all_results) / len(all_results)
+        avg_retrieval_tokens = sum(r['retrieval']['tokens'] for r in all_results) / len(all_results)
+        avg_summary_tokens = sum(r['summarization']['tokens'] for r in all_results) / len(all_results)
+        
+        print(f"\n{'Metric':<25} | {'Retrieval':<15} | {'Summarization':<15}")
         print("-"*80)
-        print(f"{'Accuracy':<20} | {retrieval['accuracy']:<15.1%} | {summary['accuracy']:<15.1%}")
-        print(f"{'Tokens Used':<20} | {retrieval['tokens']:<15} | {summary['tokens']:<15}")
-        print(f"{'Latency (ms)':<20} | {retrieval['latency']*1000:<15.0f} | {summary['latency']*1000:<15.0f}")
-        print(f"{'Elements Found':<20} | {retrieval['found_elements']}/{len(self.jwt_elements):<14} | {summary['found_elements']}/{len(self.jwt_elements):<14}")
+        print(f"{'Avg Accuracy':<25} | {avg_retrieval_acc:<15.1%} | {avg_summary_acc:<15.1%}")
+        print(f"{'Avg Tokens':<25} | {avg_retrieval_tokens:<15.0f} | {avg_summary_tokens:<15.0f}")
         
-        print(f"\n💰 Token Savings: {savings:.1f}%")
+        # Per-scenario breakdown
+        print(f"\n{'Scenario':<35} | {'Ret Acc':<10} | {'Sum Acc':<10}")
+        print("-"*80)
+        for r in all_results:
+            scenario_short = r['scenario'].replace('Easy: ', '').replace('Medium: ', '').replace('Hard: ', '')[:30]
+            print(f"{scenario_short:<35} | {r['retrieval']['accuracy']:<10.1%} | {r['summarization']['accuracy']:<10.1%}")
         
-        accuracy_gain = (retrieval['accuracy'] - summary['accuracy']) * 100
-        print(f"🎯 Accuracy Gain: {accuracy_gain:+.1f}%")
+        # Overall winner
+        accuracy_gain = (avg_retrieval_acc - avg_summary_acc) * 100
+        token_savings = ((avg_summary_tokens - avg_retrieval_tokens) / avg_summary_tokens * 100) if avg_summary_tokens > 0 else 0
         
-        if retrieval['latency'] < summary['latency']:
-            speed_gain = (summary['latency'] - retrieval['latency']) * 1000
-            print(f"⚡ Speed: {speed_gain:.0f}ms faster")
+        print(f"\n💡 KEY FINDINGS:")
+        print(f"   Retrieval is {accuracy_gain:+.1f}% more accurate on average")
+        print(f"   Retrieval uses {token_savings:.1f}% {'fewer' if token_savings > 0 else 'more'} tokens")
+        
+        # Fairness assessment
+        accuracy_variance = max(r['retrieval']['accuracy'] for r in all_results) - min(r['retrieval']['accuracy'] for r in all_results)
+        if accuracy_variance < 0.2:
+            print(f"   ⚠️  Low variance ({accuracy_variance:.1%}) - test may be too easy for retrieval")
         else:
-            speed_loss = (retrieval['latency'] - summary['latency']) * 1000
-            print(f"⚡ Speed: {speed_loss:.0f}ms slower")
+            print(f"   ✅ Good variance ({accuracy_variance:.1%}) - test appropriately challenges both approaches")
 
 
 async def main():
     """Main function to run standalone benchmark"""
     print("="*80)
     print("STANDALONE CODING BENCHMARK")
-    print("Comparing Retrieval vs Summarization for Code Recall")
+    print("Comparing Retrieval vs Summarization Across Multiple Scenarios")
     print("="*80)
     
     # Initialize system
     print("\nInitializing system...")
     
-    # Create vector DB
-    vector_db_backend = os.getenv("VECTOR_DB_BACKEND", "qdrant")
-    print(f"  Vector DB: {vector_db_backend}")
-    vector_db = create_vector_db(backend=vector_db_backend)
+    vector_db = create_vector_db(backend=os.getenv("VECTOR_DB_BACKEND", "qdrant"))
+    memory_manager = MemoryManager(vector_db=vector_db, cache_capacity=1000)
     
-    # Create memory manager
-    memory_manager = MemoryManager(
-        vector_db=vector_db,
-        cache_capacity=1000
-    )
-    
-    # Create vLLM engine
     model_name = os.getenv("MODEL_NAME", "TheBloke/Mistral-7B-Instruct-v0.2-GPTQ")
-    quantization = os.getenv("MODEL_QUANTIZATION", "gptq")
-    gpu_memory = float(os.getenv("GPU_MEMORY_UTILIZATION", "0.9"))
-    
-    print(f"  Model: {model_name}")
-    print(f"  Quantization: {quantization}")
-    
     vllm_engine = create_vllm_engine(
         model_name=model_name,
-        quantization=quantization,
-        gpu_memory_utilization=gpu_memory,
+        quantization=os.getenv("MODEL_QUANTIZATION", "gptq"),
+        gpu_memory_utilization=float(os.getenv("GPU_MEMORY_UTILIZATION", "0.9")),
         max_model_len=4096
     )
     
-    # Create infinite memory engine
     infinite_engine = InfiniteMemoryEngine(
         vllm_engine=vllm_engine,
         memory_manager=memory_manager,
