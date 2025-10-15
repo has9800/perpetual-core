@@ -1,16 +1,17 @@
 """
-vLLM Wrapper with Infinite Memory - PRODUCTION VERSION
-SYNC VERSION: Reliable, simple, 175 tok/s performance
+vLLM Wrapper with Infinite Memory - V2 PRODUCTION VERSION
+FEATURES: Nomic-Embed + BGE Reranker + Sliding Window + Token Budget
 """
 
 import asyncio
 from typing import List, Dict, Optional
 import time
 from dataclasses import dataclass
+
+# V2 imports
 from context_manager_v2 import ContextManagerV2
 from token_counter import count_tokens
-from context_manager_v2 import ContextManagerV2
-from token_counter import count_tokens
+
 
 @dataclass
 class GenerationRequest:
@@ -26,7 +27,7 @@ class GenerationRequest:
 
 def create_vllm_engine(model_name: str,
                        quantization: str = "gptq",
-                       gpu_memory_utilization: float = 0.9,  # 90% GPU for max performance
+                       gpu_memory_utilization: float = 0.9,
                        max_model_len: int = 4096):
     """Create real vLLM engine using high-level API"""
     from vllm import LLM
@@ -50,28 +51,33 @@ def create_vllm_engine(model_name: str,
 
 
 class InfiniteMemoryEngine:
-    """vLLM engine with infinite conversation memory (SYNC VERSION)"""
+    """vLLM engine with infinite conversation memory (V2)"""
 
     def __init__(self,
-                vllm_engine,
-                memory_manager,
-                max_context_tokens: int = 4096,
-                context_retrieval_k: int = 3):
+                 vllm_engine,
+                 memory_manager,
+                 max_context_tokens: int = 4096,
+                 context_retrieval_k: int = 3,
+                 use_v2: bool = True):
         self.engine = vllm_engine
         self.memory = memory_manager
         self.max_context_tokens = max_context_tokens
         self.context_retrieval_k = context_retrieval_k
         
-        # V2: Add context manager
-        self.context_manager = ContextManagerV2(
-            token_budget=2000,  # 2K tokens for context
-            recent_turns_limit=15
-        )
+        # V2: Create context manager
+        if use_v2:
+            self.context_manager = ContextManagerV2(
+                token_budget=2000,
+                recent_turns_limit=15
+            )
+            print("✅ V2 Context Manager enabled (15-turn sliding window, 2000 token budget)")
+        else:
+            self.context_manager = None
+            print("⚠️  V2 Context Manager disabled (using v1)")
         
         self.generation_count = 0
         self.total_tokens_generated = 0
         self.context_retrievals = 0
-
 
     async def generate(self, request: GenerationRequest) -> Dict:
         """Generate response with V2 memory management"""
@@ -90,7 +96,7 @@ class InfiniteMemoryEngine:
                 user_query = "continue"
 
             # V2: Check if we need to offload old turns
-            if hasattr(self, 'context_manager'):
+            if self.context_manager:
                 turns_to_offload = self.context_manager.get_turns_for_offload(request.conversation_id)
                 if turns_to_offload:
                     for turn in turns_to_offload:
@@ -99,7 +105,7 @@ class InfiniteMemoryEngine:
                             text=turn['user'],
                             metadata={
                                 'response': turn['assistant'],
-                                'timestamp': turn['timestamp']
+                                'timestamp': turn.get('timestamp', time.time())
                             }
                         )
                     self.context_manager.prune_offloaded_turns(
@@ -111,20 +117,19 @@ class InfiniteMemoryEngine:
             context_result = self.memory.retrieve_context(
                 conversation_id=request.conversation_id,
                 query=user_query,
-                top_k=20  # Get 20 for reranking
+                top_k=self.context_retrieval_k
             )
 
             retrieved_context = context_result.get('results', [])
             self.context_retrievals += 1
 
-            # V2: Build context with token budget (if context_manager exists)
-            if hasattr(self, 'context_manager'):
+            # V2: Build context with token budget
+            if self.context_manager:
                 formatted_context, context_meta = self.context_manager.get_context_for_llm(
                     conversation_id=request.conversation_id,
                     retrieved_context=retrieved_context
                 )
                 
-                # Build prompt with V2 context
                 prompt = self._build_prompt_v2(
                     messages=request.messages,
                     formatted_context=formatted_context,
@@ -152,8 +157,8 @@ class InfiniteMemoryEngine:
                 temperature=request.temperature
             )
 
-            # V2: Store in context manager (if exists)
-            if hasattr(self, 'context_manager'):
+            # V2: Store in context manager
+            if self.context_manager:
                 self.context_manager.add_turn(
                     conversation_id=request.conversation_id,
                     user_query=user_query,
@@ -171,7 +176,7 @@ class InfiniteMemoryEngine:
             latency = (time.time() - start_time) * 1000
 
             # Get conversation length
-            if hasattr(self, 'context_manager'):
+            if self.context_manager:
                 conv_length = self.context_manager.get_recent_turns_count(request.conversation_id)
             else:
                 conv_length = self.memory.get_conversation_length(request.conversation_id)
@@ -200,7 +205,6 @@ class InfiniteMemoryEngine:
                 'conversation_id': request.conversation_id
             }
 
-
     async def _call_vllm(self, prompt: str, max_tokens: int, 
                         temperature: float) -> str:
         """Call vLLM using high-level API"""
@@ -226,9 +230,9 @@ class InfiniteMemoryEngine:
         return ""
 
     def _build_prompt_v2(self, 
-                        messages: List[Dict],
-                        formatted_context: str,
-                        user_query: str) -> str:
+                         messages: List[Dict],
+                         formatted_context: str,
+                         user_query: str) -> str:
         """Build prompt using V2 formatted context"""
         prompt_parts = []
 
@@ -249,6 +253,45 @@ class InfiniteMemoryEngine:
 
         return "\n".join(prompt_parts)
 
+    def _build_prompt(self, 
+                     messages: List[Dict],
+                     recent_turns: List[str],
+                     retrieved_context: List[Dict],
+                     user_query: str) -> str:
+        """Build prompt with retrieved context (V1 fallback)"""
+        prompt_parts = []
+
+        # Add system message if present
+        system_msg = next((m['content'] for m in messages if m['role'] == 'system'), None)
+        if system_msg:
+            prompt_parts.append(f"System: {system_msg}")
+            prompt_parts.append("")
+
+        # Add retrieved relevant context (if high similarity)
+        if retrieved_context:
+            high_quality = [ctx for ctx in retrieved_context if ctx.get('similarity', 0) > 0.5]
+            if high_quality:
+                prompt_parts.append("# Relevant context from earlier in conversation:")
+                for ctx in high_quality[:2]:
+                    query = ctx['text']
+                    response = ctx['metadata'].get('response', '')
+                    if response:
+                        prompt_parts.append(f"Previously - User: {query[:100]}...")
+                        prompt_parts.append(f"Assistant: {response[:150]}...")
+                prompt_parts.append("")
+
+        # Add recent turns (last 3 exchanges)
+        if recent_turns:
+            prompt_parts.append("# Recent conversation:")
+            for turn in recent_turns[-3:]:
+                prompt_parts.append(turn)
+            prompt_parts.append("")
+
+        # Add current query
+        prompt_parts.append(f"User: {user_query}")
+        prompt_parts.append("Assistant:")
+
+        return "\n".join(prompt_parts)
 
     def get_stats(self) -> Dict:
         """Get statistics"""
@@ -268,8 +311,7 @@ class InfiniteMemoryEngine:
         }
         
         # Add V2 stats if context manager exists
-        if hasattr(self, 'context_manager'):
+        if self.context_manager:
             stats['context_v2_stats'] = self.context_manager.get_stats()
         
         return stats
-

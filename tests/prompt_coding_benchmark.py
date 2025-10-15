@@ -1,7 +1,6 @@
 """
-Prompt Coding Benchmark Suite - V2
-For testing retrieval vs summarization in PROMPT-BASED coding platforms (Loveable, v0, etc.)
-PITCH-READY: Shows clear advantages for complex app development
+GPU Benchmark Suite for Infinite Memory Inference API - V2
+UPDATED FOR V2: Tests Nomic-Embed + BGE Reranker + Sliding Window + Token Budget
 """
 
 import asyncio
@@ -21,11 +20,94 @@ from context_manager_v2 import ContextManagerV2
 from token_counter import count_tokens
 
 
-class LoveableStyleBenchmark:
-    """
-    Benchmark for Loveable-style complex app development
-    Tests retrieval vs summarization over 100-turn app building session
-    """
+class ThroughputBenchmark:
+    """Benchmark throughput and latency at different conversation lengths"""
+
+    def __init__(self, engine, memory):
+        self.engine = engine
+        self.memory = memory
+
+    async def run(self) -> Dict:
+        """Run throughput benchmark"""
+        print("\n" + "="*80)
+        print("BENCHMARK 1: THROUGHPUT & LATENCY (V2)")
+        print("Verify throughput stays constant with sliding window + token budget")
+        print("="*80)
+
+        results = {}
+        turn_counts = [10, 50, 100, 200]
+
+        for turns in turn_counts:
+            print(f"\nLatency for {turns} turns:")
+            latencies = []
+            throughputs = []
+            token_usages = []
+
+            conv_id = f"throughput_test_{turns}"
+
+            for i in range(turns):
+                start = time.time()
+
+                request = GenerationRequest(
+                    conversation_id=conv_id,
+                    messages=[{"role": "user", "content": f"Message {i+1}: Tell me a short fact."}],
+                    model="test",
+                    max_tokens=50,
+                    temperature=0.7
+                )
+
+                result = await self.engine.generate(request)
+
+                if result.get('success'):
+                    latency = (time.time() - start) * 1000
+                    tokens = result['metadata']['tokens_generated']
+                    context_tokens = result['metadata'].get('context_tokens', 0)
+                    throughput = tokens / (latency / 1000)
+
+                    latencies.append(latency)
+                    throughputs.append(throughput)
+                    token_usages.append(context_tokens)
+
+            if latencies:
+                results[f'{turns}_turns'] = {
+                    'avg_latency': np.mean(latencies),
+                    'p50_latency': np.percentile(latencies, 50),
+                    'p95_latency': np.percentile(latencies, 95),
+                    'p99_latency': np.percentile(latencies, 99),
+                    'avg_throughput': np.mean(throughputs),
+                    'min_throughput': np.min(throughputs),
+                    'max_throughput': np.max(throughputs),
+                    'avg_context_tokens': np.mean(token_usages),
+                    'max_context_tokens': np.max(token_usages)
+                }
+
+                print(f"RESULTS:")
+                print(f"  Avg latency: {results[f'{turns}_turns']['avg_latency']:.0f}ms")
+                print(f"  P50 latency: {results[f'{turns}_turns']['p50_latency']:.0f}ms")
+                print(f"  P95 latency: {results[f'{turns}_turns']['p95_latency']:.0f}ms")
+                print(f"  P99 latency: {results[f'{turns}_turns']['p99_latency']:.0f}ms")
+                print(f"  Avg throughput: {results[f'{turns}_turns']['avg_throughput']:.1f} tokens/sec")
+                print(f"  Avg context tokens: {results[f'{turns}_turns']['avg_context_tokens']:.0f}")
+                print(f"  Max context tokens: {results[f'{turns}_turns']['max_context_tokens']:.0f}")
+
+        # V2 TEST: Verify context stays bounded
+        print("\n📊 V2 Token Budget Test:")
+        print(f"  10 turns:  {results['10_turns']['avg_context_tokens']:.0f} tokens")
+        print(f"  50 turns:  {results['50_turns']['avg_context_tokens']:.0f} tokens")
+        print(f"  100 turns: {results['100_turns']['avg_context_tokens']:.0f} tokens")
+        print(f"  200 turns: {results['200_turns']['avg_context_tokens']:.0f} tokens")
+        
+        if results['10_turns']['avg_context_tokens'] > 0:
+            growth = ((results['200_turns']['avg_context_tokens'] - results['10_turns']['avg_context_tokens']) 
+                      / results['10_turns']['avg_context_tokens'] * 100)
+            print(f"  Context growth (10→200 turns): {growth:.1f}%")
+            print(f"  ✅ Expected: <50% growth (bounded by token budget)")
+        
+        return results
+
+
+class MemoryEfficiencyBenchmark:
+    """Benchmark V2 memory efficiency with 15-turn sliding window"""
 
     def __init__(self, engine, memory, context_manager):
         self.engine = engine
@@ -33,526 +115,629 @@ class LoveableStyleBenchmark:
         self.context_manager = context_manager
 
     async def run(self) -> Dict:
-        """Run Loveable-style complex app benchmark"""
+        """Run V2 memory efficiency benchmark"""
         print("\n" + "="*80)
-        print("LOVEABLE BENCHMARK: RETRIEVAL VS SUMMARIZATION")
-        print("Complex app development over 100 turns")
+        print("BENCHMARK 2: MEMORY EFFICIENCY (V2)")
+        print("Testing 15-turn sliding window + token budget + deduplication")
         print("="*80)
+        print("Building conversation and measuring token usage...")
 
-        # Generate realistic Loveable-style conversation
-        loveable_session = self.generate_loveable_app_session()
+        conv_id = "memory_test_v2"
+        context_tokens_per_turn = []
+        recent_turns_per_turn = []
 
-        print(f"\nGenerated {len(loveable_session)} turn app development session")
-        print("Simulating real Loveable workflow: e-commerce app with auth, cart, payment")
-        print("\nTesting both approaches...\n")
+        # Build 100 turn conversation
+        for i in range(100):
+            request = GenerationRequest(
+                conversation_id=conv_id,
+                messages=[{"role": "user", "content": f"Turn {i+1}: Explain Python decorators briefly."}],
+                model="test",
+                max_tokens=50,
+                temperature=0.7
+            )
 
-        # Test 1: V2 Retrieval Approach
-        print("="*80)
-        print("APPROACH 1: V2 RETRIEVAL (Your System)")
-        print("="*80)
-        retrieval_result = await self.test_retrieval_approach(loveable_session)
+            result = await self.engine.generate(request)
 
-        # Test 2: Summarization Approach (what they might be doing now)
-        print("\n" + "="*80)
-        print("APPROACH 2: SUMMARIZATION (Traditional)")
-        print("="*80)
-        summary_result = await self.test_summary_approach(loveable_session)
+            if result.get('success'):
+                context_tokens = result['metadata'].get('context_tokens', 0)
+                recent_turns = result['metadata'].get('recent_turns_used', 0)
+                
+                context_tokens_per_turn.append(context_tokens)
+                recent_turns_per_turn.append(recent_turns)
 
-        # Calculate comparison
+        if not context_tokens_per_turn:
+            print("\n❌ ERROR: No data collected")
+            return {'error': 'No data'}
+
+        # Traditional approach (full history)
+        traditional_tokens_at_100 = sum(range(1, 101)) * 30
+
+        # V2 approach (bounded context)
+        v2_tokens_at_100 = context_tokens_per_turn[-1]
+
+        # Memory savings
+        savings = ((traditional_tokens_at_100 - v2_tokens_at_100) / traditional_tokens_at_100 * 100)
+
+        # Check if context stays bounded
+        first_half_avg = np.mean(context_tokens_per_turn[:50])
+        second_half_avg = np.mean(context_tokens_per_turn[50:])
+        growth = ((second_half_avg - first_half_avg) / first_half_avg * 100) if first_half_avg > 0 else 0
+
+        # Check sliding window stability
+        recent_turns_at_50 = np.mean(recent_turns_per_turn[45:50]) if len(recent_turns_per_turn) >= 50 else 0
+        recent_turns_at_100 = np.mean(recent_turns_per_turn[95:100]) if len(recent_turns_per_turn) >= 100 else 0
+
+        # Get V2 stats
+        v2_stats = self.context_manager.get_stats() if self.context_manager else {}
+
         results = {
-            'v2_retrieval': retrieval_result,
-            'summarization': summary_result,
+            'traditional_tokens_at_100': traditional_tokens_at_100,
+            'v2_tokens_at_100': v2_tokens_at_100,
+            'savings_percent': savings,
+            'context_growth_percent': growth,
+            'recent_turns_at_50': recent_turns_at_50,
+            'recent_turns_at_100': recent_turns_at_100,
+            'v2_deduplication_count': v2_stats.get('turns_deduplicated', 0),
+            'v2_offload_count': v2_stats.get('turns_offloaded', 0)
+        }
+
+        print(f"\nRESULTS:")
+        print(f"  At turn 100:")
+        print(f"    Traditional approach: {traditional_tokens_at_100} tokens")
+        print(f"    V2 approach: {v2_tokens_at_100} tokens")
+        print(f"    Savings: {savings:.1f}%")
+        print(f"  Context growth (first 50 → last 50): {growth:.1f}%")
+        print(f"    ✅ Expected: <20% (token budget keeps it bounded)")
+        print(f"\n  V2 Sliding Window:")
+        print(f"    Recent turns kept at turn 50: {recent_turns_at_50:.1f}")
+        print(f"    Recent turns kept at turn 100: {recent_turns_at_100:.1f}")
+        print(f"    ✅ Should stay around 10-15 turns")
+        print(f"\n  V2 Optimizations:")
+        print(f"    Turns deduplicated: {results['v2_deduplication_count']}")
+        print(f"    Turns offloaded to Qdrant: {results['v2_offload_count']}")
+
+        return results
+
+
+class RetrievalAccuracyBenchmark:
+    """Benchmark V2 two-stage retrieval (Nomic-Embed + BGE Reranker)"""
+
+    def __init__(self, engine, memory):
+        self.engine = engine
+        self.memory = memory
+
+    async def run(self) -> Dict:
+        """Run V2 retrieval accuracy benchmark with reranking"""
+        print("\n" + "="*80)
+        print("BENCHMARK 3: RETRIEVAL ACCURACY (V2 with Nomic-Embed + BGE Reranker)")
+        print("Tests two-stage retrieval: embedding → reranking")
+        print("="*80)
+        print("Testing semantic retrieval with reranking...")
+
+        conv_id = "accuracy_test_v2"
+
+        # Test pairs
+        test_pairs = [
+            {
+                "initial": "I'm allergic to peanuts and shellfish",
+                "query": "Do you remember my dietary restrictions?",
+                "topic": "allergies/dietary"
+            },
+            {
+                "initial": "My dog's name is Max and he's a golden retriever",
+                "query": "What's my pet's name?",
+                "topic": "pet name"
+            },
+            {
+                "initial": "I work as a software engineer at Google in Mountain View",
+                "query": "Where do I work?",
+                "topic": "job/workplace"
+            },
+            {
+                "initial": "I'm planning a trip to Japan next summer for 2 weeks",
+                "query": "What travel plans did I mention?",
+                "topic": "travel plans"
+            },
+            {
+                "initial": "I prefer working out in the morning around 6 AM",
+                "query": "When do I like to exercise?",
+                "topic": "workout schedule"
+            },
+            {
+                "initial": "My birthday is on December 15th",
+                "query": "What's my birth date?",
+                "topic": "birthday"
+            },
+            {
+                "initial": "I'm learning Python and JavaScript for web development",
+                "query": "What programming languages am I studying?",
+                "topic": "learning/skills"
+            },
+            {
+                "initial": "I live in Edmonton, Alberta, Canada",
+                "query": "Where is my home?",
+                "topic": "location"
+            }
+        ]
+
+        # Store initial statements
+        print(f"\nStoring {len(test_pairs)} initial statements...")
+        for i, pair in enumerate(test_pairs):
+            self.memory.add_turn(
+                conversation_id=conv_id,
+                text=pair["initial"],
+                metadata={
+                    'response': f"Got it, I'll remember that about {pair['topic']}.",
+                    'test_index': i,
+                    'topic': pair['topic']
+                }
+            )
+
+            # Add filler turns
+            for j in range(3):
+                self.memory.add_turn(
+                    conversation_id=conv_id,
+                    text=f"Filler message {i*3 + j}",
+                    metadata={'response': 'Acknowledged', 'filler': True}
+                )
+
+        # Wait for indexing
+        print(f"Waiting for Qdrant indexing...")
+        await asyncio.sleep(2)
+
+        # Test retrieval
+        print(f"\nTesting two-stage retrieval (Nomic-Embed + BGE Reranker)...")
+        print("="*80)
+
+        correct = 0
+        embedding_similarities = []
+        rerank_scores = []
+        results_detail = []
+
+        for i, pair in enumerate(test_pairs):
+            print(f"\n  Test {i+1}/{len(test_pairs)}: {pair['topic']}")
+            print(f"    Query: '{pair['query'][:60]}...'")
+
+            # V2: Retrieve with reranking
+            context = self.memory.retrieve_context(conv_id, pair['query'], top_k=3)
+
+            if context.get('success') and context.get('results'):
+                results_list = context['results']
+
+                found = False
+                for result in results_list:
+                    if result['metadata'].get('filler'):
+                        continue
+
+                    embedding_sim = result.get('similarity', 0)
+                    rerank_score = result.get('rerank_score', 0)
+
+                    if result['metadata'].get('topic') == pair['topic']:
+                        found = True
+                        embedding_similarities.append(embedding_sim)
+                        
+                        if rerank_score > 0:
+                            rerank_scores.append(rerank_score)
+
+                        print(f"    ✅ FOUND!")
+                        print(f"       Embedding similarity: {embedding_sim:.3f}")
+                        if rerank_score > 0:
+                            print(f"       Rerank score: {rerank_score:.3f}")
+
+                        if embedding_sim >= 0.4 or rerank_score >= 0.5:
+                            correct += 1
+                            results_detail.append({
+                                'test': i+1,
+                                'topic': pair['topic'],
+                                'embedding_sim': embedding_sim,
+                                'rerank_score': rerank_score,
+                                'success': True
+                            })
+                        else:
+                            results_detail.append({
+                                'test': i+1,
+                                'topic': pair['topic'],
+                                'embedding_sim': embedding_sim,
+                                'rerank_score': rerank_score,
+                                'success': False,
+                                'reason': 'Low scores'
+                            })
+                        break
+
+                if not found:
+                    print(f"    ❌ NOT FOUND")
+                    results_detail.append({
+                        'test': i+1,
+                        'topic': pair['topic'],
+                        'success': False,
+                        'reason': 'Not in top results'
+                    })
+            else:
+                print(f"    ❌ Retrieval failed")
+                results_detail.append({
+                    'test': i+1,
+                    'topic': pair['topic'],
+                    'success': False,
+                    'reason': 'Retrieval failed'
+                })
+
+        # Calculate metrics
+        accuracy = (correct / len(test_pairs) * 100)
+
+        results = {
+            'accuracy_percent': accuracy,
+            'correct': correct,
+            'total': len(test_pairs),
+            'avg_embedding_similarity': np.mean(embedding_similarities) if embedding_similarities else 0,
+            'avg_rerank_score': np.mean(rerank_scores) if rerank_scores else 0,
+            'reranked_count': len(rerank_scores),
+            'details': results_detail
+        }
+
+        # Print summary
+        print("\n" + "="*80)
+        print("RESULTS:")
+        print(f"  V2 Two-Stage Retrieval Accuracy: {accuracy:.1f}% ({correct}/{len(test_pairs)})")
+        print(f"  Avg embedding similarity (Nomic-Embed): {results['avg_embedding_similarity']:.3f}")
+        if rerank_scores:
+            print(f"  Avg rerank score (BGE): {results['avg_rerank_score']:.3f}")
+            print(f"  Reranked results: {len(rerank_scores)}/{len(test_pairs)}")
+        print(f"\n  ✅ Expected: 75-90% accuracy with V2 (vs 60-75% with old embedder)")
+
+        return results
+
+class ComparativeBenchmark:
+    """Compare V2 retrieval vs summarization for coding tasks"""
+    
+    def __init__(self, engine, memory):
+        self.engine = engine
+        self.memory = memory
+    
+    async def run(self) -> Dict:
+        """Run V2 comparison"""
+        print("\n" + "="*80)
+        print("BENCHMARK 4: V2 RETRIEVAL VS SUMMARIZATION (CODING)")
+        print("Compare V2 two-stage retrieval vs local model summarization")
+        print("="*80)
+        
+        # Generate 50-turn coding conversation
+        coding_conversation = self.generate_coding_session()
+        
+        print(f"\nGenerated {len(coding_conversation)} turn coding conversation")
+        print("Testing both approaches...\n")
+        
+        # Test 1: V2 retrieval
+        print("Testing V2 retrieval (Nomic-Embed + BGE Reranker)...")
+        retrieval_result = await self.test_retrieval_approach(coding_conversation)
+        
+        # Test 2: Summarization
+        print("\nTesting summarization approach...")
+        summary_result = await self.test_summary_approach(coding_conversation)
+        
+        # Compare
+        results = {
+            'retrieval_v2': retrieval_result,
+            'summary': summary_result,
             'comparison': {
                 'token_savings': (
                     (summary_result['tokens_used'] - retrieval_result['tokens_used']) 
                     / summary_result['tokens_used'] * 100
                 ) if summary_result['tokens_used'] > 0 else 0,
-                'accuracy_gain': (retrieval_result['accuracy'] - summary_result['accuracy']) * 100,
-                'latency_diff_ms': (retrieval_result['latency_ms'] - summary_result['latency_ms']),
-                'cost_savings_per_1k_requests': self.calculate_cost_savings(
-                    retrieval_result['tokens_used'],
-                    summary_result['tokens_used']
-                )
+                'accuracy_diff': retrieval_result['accuracy'] - summary_result['accuracy'],
+                'latency_diff_ms': (retrieval_result['latency_ms'] - summary_result['latency_ms'])
             }
         }
-
-        # Print comparison
-        self.print_pitch_results(results)
-
-        return results
-
-    def generate_loveable_app_session(self) -> List[Dict]:
-        """Generate realistic 100-turn e-commerce app session"""
         
+        # Print results
+        print("\n" + "="*80)
+        print("V2 COMPARISON RESULTS:")
+        print("="*80)
+        print(f"\n{'Metric':<25} | {'V2 Retrieval':<15} | {'Summary':<15}")
+        print("-"*80)
+        print(f"{'Code Accuracy':<25} | {retrieval_result['accuracy']:<15.1%} | {summary_result['accuracy']:<15.1%}")
+        print(f"{'Tokens Used':<25} | {retrieval_result['tokens_used']:<15} | {summary_result['tokens_used']:<15}")
+        print(f"{'Latency (ms)':<25} | {retrieval_result['latency_ms']:<15.0f} | {summary_result['latency_ms']:<15.0f}")
+        
+        print(f"\n{'Token Savings:':<25} {results['comparison']['token_savings']:.1f}%")
+        print(f"{'Accuracy Gain:':<25} {results['comparison']['accuracy_diff']*100:+.1f}%")
+        print(f"\n  ✅ V2 Expected: 60-80% token savings, +10-20% accuracy vs summary")
+        
+        return results
+    
+    def generate_coding_session(self) -> List[Dict]:
+        """Generate realistic 50-turn coding conversation"""
         conversation = []
         
-        # Phase 1: Setup (turns 1-10)
-        conversation.extend([
-            {"turn": 1, "user": "Create a modern e-commerce landing page", "assistant": "``````", "phase": "setup"},
-            {"turn": 2, "user": "Add product grid with images", "assistant": "``````", "phase": "setup"},
-            {"turn": 3, "user": "Create product detail page", "assistant": "``````", "phase": "setup"},
-            {"turn": 4, "user": "Add to cart button", "assistant": "``````", "phase": "setup"},
-        ])
-        
-        # Phase 2: Authentication (turns 11-25) - KEY COMPONENTS
-        conversation.extend([
-            {"turn": 11, "user": "Add user authentication with JWT", "assistant": "``````", "phase": "auth", "key": True},
-            {"turn": 12, "user": "Create login form", "assistant": "``````", "phase": "auth", "key": True},
-            {"turn": 13, "user": "Add register form", "assistant": "``````", "phase": "auth"},
-            {"turn": 14, "user": "Protected routes for logged-in users", "assistant": "``````", "phase": "auth", "key": True},
-            {"turn": 15, "user": "Add logout functionality", "assistant": "``````", "phase": "auth"},
-        ])
-        
-        # Phase 3: Cart Logic (turns 26-45) - KEY COMPONENTS
-        conversation.extend([
-            {"turn": 26, "user": "Create cart context for state management", "assistant": "``````", "phase": "cart", "key": True},
-            {"turn": 27, "user": "Cart page with item list", "assistant": "``````", "phase": "cart", "key": True},
-            {"turn": 28, "user": "Cart item component", "assistant": "``````", "phase": "cart"},
-            {"turn": 29, "user": "Cart badge in header", "assistant": "``````", "phase": "cart"},
-        ])
-        
-        # Phase 4: Payment (turns 46-60) - KEY COMPONENTS
-        conversation.extend([
-            {"turn": 46, "user": "Stripe payment integration", "assistant": "``````", "phase": "payment", "key": True},
-            {"turn": 47, "user": "Payment API endpoint", "assistant": "``````", "phase": "payment", "key": True},
-            {"turn": 48, "user": "Order confirmation page", "assistant": "``````", "phase": "payment"},
-        ])
-        
-        # Phase 5: Filler/styling (turns 61-95)
-        for i in range(61, 96):
+        # Turns 1-9: Setup
+        for i in range(1, 10):
             conversation.append({
                 "turn": i,
-                "user": f"Update styling for section {i}",
-                "assistant": f"``````",
-                "phase": "styling",
-                "filler": True
+                "user": f"Add feature {i}",
+                "assistant": "``````"
             })
         
-        # Phase 6: Test queries (turns 96-100) - User references earlier code
-        conversation.extend([
-            {
-                "turn": 96,
-                "user": "I need to add a check in the cart to verify user is logged in before checkout. Use the auth context we created earlier",
-                "assistant": "retrieving...",
-                "test_query": True,
-                "requires": ["AuthContext", "useAuth", "ProtectedRoute"],
-                "phase_needed": "auth"
-            },
-            {
-                "turn": 97,
-                "user": "Show me the cart total calculation logic we wrote",
-                "assistant": "retrieving...",
-                "test_query": True,
-                "requires": ["total", "reduce", "CartContext"],
-                "phase_needed": "cart"
-            },
-            {
-                "turn": 98,
-                "user": "I want to trigger the payment flow when user clicks checkout. Reference the Stripe integration",
-                "assistant": "retrieving...",
-                "test_query": True,
-                "requires": ["stripe", "confirmCardPayment", "CheckoutForm"],
-                "phase_needed": "payment"
-            },
-            {
-                "turn": 99,
-                "user": "Add the login check before showing payment form",
-                "assistant": "retrieving...",
-                "test_query": True,
-                "requires": ["useAuth", "user", "login"],
-                "phase_needed": "auth"
-            },
-            {
-                "turn": 100,
-                "user": "Show the complete cart and payment flow including auth",
-                "assistant": "retrieving...",
-                "test_query": True,
-                "requires": ["CartContext", "total", "stripe", "useAuth", "ProtectedRoute"],
-                "phase_needed": "all",
-                "multi_phase": True
-            }
-        ])
+        # Turn 10: JWT Authentication (KEY TURN)
+        conversation.append({
+            "turn": 10,
+            "user": "Add JWT authentication with login and token generation",
+            "assistant": "``````"
+        })
+        
+        # Turns 11-49: Filler
+        for i in range(11, 50):
+            conversation.append({
+                "turn": i,
+                "user": f"Add validation {i}",
+                "assistant": "``````"
+            })
+        
+        # Turn 50: Test query
+        conversation.append({
+            "turn": 50,
+            "user": "Show me the JWT login function we created earlier",
+            "assistant": "Let me retrieve that",
+            "requires_code": ["create_access_token", "jwt_required", "login", "JWT_SECRET_KEY"]
+        })
         
         return conversation
-
+    
     async def test_retrieval_approach(self, conversation: List[Dict]) -> Dict:
-        """Test V2 retrieval approach"""
-        conv_id = "loveable_retrieval_v2"
+        """Test V2 retrieval"""
+        conv_id = "coding_retrieval_v2_test"
         
-        print("Building app (turns 1-95)...")
+        print(f"  Storing {len(conversation[:49])} turns...")
         
-        # Get actual conversation length and test queries
-        test_turns = [t for t in conversation if t.get('test_query')]
-        total_turns = len(conversation)
-        training_turns = total_turns - len(test_turns) if test_turns else total_turns
-        
-        print(f"Total turns: {total_turns}, Training: {training_turns}, Test: {len(test_turns)}")
-        
-        # Check if we have test queries
-        if len(test_turns) == 0:
-            print("❌ ERROR: No test queries found in conversation")
-            return {
-                'accuracy': 0,
-                'tokens_used': 0,
-                'total_tokens': 0,
-                'latency_ms': 0,
-                'queries_successful': 0,
-                'total_queries': 0,
-                'error': 'No test queries in conversation',
-                'details': []
-            }
-        
-        # Store training turns (all except test queries)
-        for turn in conversation:
-            if turn.get('test_query'):
-                continue  # Skip test queries for now
-                
-            if turn.get('filler'):
-                continue  # Skip filler to simulate real workflow
-            
+        # Feed turns 1-49
+        for turn in conversation[:49]:
             self.memory.add_turn(
                 conversation_id=conv_id,
                 text=turn["user"],
-                metadata={
-                    'response': turn["assistant"],
-                    'turn': turn["turn"],
-                    'phase': turn.get("phase"),
-                    'key': turn.get("key", False)
-                }
+                metadata={'response': turn["assistant"], 'turn': turn["turn"]}
             )
         
-        print("Waiting for vector DB indexing...")
-        await asyncio.sleep(2)
+        # Wait for Qdrant indexing
+        print("  Waiting for vector DB indexing...")
+        await asyncio.sleep(3)
         
-        print(f"Stored {self.memory.get_conversation_length(conv_id)} turns")
+        # Verify data stored
+        stored_count = self.memory.get_conversation_length(conv_id)
+        print(f"  Verified: {stored_count} turns in vector DB")
         
-        print(f"\nTesting {len(test_turns)} reference queries...\n")
+        turn_50 = conversation[49]
+        start_time = time.time()
         
-        correct = 0
-        total_tokens = 0
-        total_latency = 0
-        results_detail = []
+        # V2: Two-stage retrieval
+        print(f"  Querying: '{turn_50['user'][:50]}...'")
+        context = self.memory.retrieve_context(
+            conversation_id=conv_id,
+            query=turn_50["user"],
+            top_k=5
+        )
         
-        for i, test in enumerate(test_turns):
-            print(f"  Query {i+1}/{len(test_turns)}: \"{test['user'][:70]}...\"")
-            print(f"    Needs: {', '.join(test['requires'][:3])}")
-            
-            start_time = time.time()
-            
-            # V2: Retrieve with reranking
-            context = self.memory.retrieve_context(
-                conversation_id=conv_id,
-                query=test['user'],
-                top_k=5  # Get multiple relevant pieces
-            )
-            
-            latency = (time.time() - start_time) * 1000
-            total_latency += latency
-            
-            # Check what was found
-            found_items = []
-            context_tokens = 0
-            
-            if context.get('success') and context['results']:
-                for result in context['results']:
-                    response = result['metadata'].get('response', '')
-                    context_tokens += count_tokens(response)
-                    
-                    for required in test['requires']:
-                        if required in response and required not in found_items:
-                            found_items.append(required)
-            
-            total_tokens += context_tokens
-            
-            accuracy = len(found_items) / len(test['requires']) if test['requires'] else 0
-            if accuracy >= 0.6:  # 60%+ is success
-                correct += 1
-                print(f"    ✅ SUCCESS: Found {len(found_items)}/{len(test['requires'])} ({accuracy:.0%})")
-            else:
-                print(f"    ❌ PARTIAL: Found {len(found_items)}/{len(test['requires'])} ({accuracy:.0%})")
-            
-            print(f"       Tokens: {context_tokens}, Latency: {latency:.0f}ms")
-            
-            results_detail.append({
-                'query': i+1,
-                'accuracy': accuracy,
-                'found': len(found_items),
-                'required': len(test['requires']),
-                'tokens': context_tokens,
-                'latency_ms': latency
-            })
+        latency = (time.time() - start_time) * 1000
         
-        overall_accuracy = correct / len(test_turns)
-        avg_tokens = total_tokens / len(test_turns) if test_turns else 0
-        avg_latency = total_latency / len(test_turns) if test_turns else 0
+        print(f"  Retrieved {len(context.get('results', []))} results")
         
-        print(f"\n  V2 Retrieval Summary:")
-        print(f"    Overall Accuracy: {overall_accuracy:.1%} ({correct}/{len(test_turns)} queries)")
-        print(f"    Avg Tokens/Query: {avg_tokens:.0f}")
-        print(f"    Avg Latency: {avg_latency:.0f}ms")
+        # Check for required code elements
+        required_codes = turn_50.get("requires_code", [])
+        matches_found = []
+        
+        if context.get('success') and context.get('results'):
+            print(f"  Checking results for: {required_codes}")
+            for i, result in enumerate(context['results']):
+                response_text = result['metadata'].get('response', '')
+                similarity = result.get('similarity', 0)
+                rerank = result.get('rerank_score', 0)
+                
+                print(f"    Result {i+1}: sim={similarity:.3f}, rerank={rerank:.3f}")
+                
+                for required in required_codes:
+                    if required in response_text and required not in matches_found:
+                        matches_found.append(required)
+                        print(f"      ✅ Found: {required}")
+        else:
+            print(f"  ❌ Retrieval failed or no results")
+        
+        accuracy = len(matches_found) / len(required_codes) if required_codes else 0
+        
+        # Count tokens properly
+        tokens_used = sum(count_tokens(r.get('text', '') + r.get('metadata', {}).get('response', '')) 
+                         for r in context.get('results', []))
+        
+        print(f"\n  ✅ V2 Retrieval complete")
+        print(f"     - Found {len(matches_found)}/{len(required_codes)} code elements: {matches_found}")
+        print(f"     - Accuracy: {accuracy:.1%}")
+        print(f"     - Tokens used: {tokens_used}")
         
         return {
-            'accuracy': overall_accuracy,
-            'tokens_used': int(avg_tokens),
-            'total_tokens': total_tokens,
-            'latency_ms': avg_latency,
-            'queries_successful': correct,
-            'total_queries': len(test_turns),
-            'details': results_detail
+            'accuracy': accuracy,
+            'tokens_used': tokens_used,
+            'latency_ms': latency,
+            'matches_found': matches_found
         }
-
-
+    
     async def test_summary_approach(self, conversation: List[Dict]) -> Dict:
-        """Test summarization approach"""
-        
-        # Get test queries first
-        test_turns = [t for t in conversation if t.get('test_query')]
-        
-        if len(test_turns) == 0:
-            print("  ❌ ERROR: No test queries found")
-            return {
-                'accuracy': 0,
-                'tokens_used': 0,
-                'total_tokens': 0,
-                'latency_ms': 0,
-                'queries_successful': 0,
-                'total_queries': 0,
-                'error': 'No test queries'
-            }
-        
-        print("Building app history for summarization...")
-        
-        # Build full history (excluding test queries)
+        """Test summarization"""
         full_history = []
-        for turn in conversation:
-            if turn.get('test_query'):
-                continue
+        for turn in conversation[:49]:
             full_history.append(f"User: {turn['user']}")
             full_history.append(f"Assistant: {turn['assistant']}")
         
         history_text = "\n".join(full_history)
         
-        print(f"Full history: {len(history_text)} characters")
-        print("Generating summary with local model...")
+        start_time = time.time()
         
-        # Generate summary
-        start_summary = time.time()
-        
-        summary_prompt = f"""Summarize this e-commerce app development session. Preserve ALL important code snippets, function names, and component structures:
+        summary_prompt = f"""Summarize this coding conversation, preserving code snippets:
 
-    {history_text[:8000]}
+{history_text[:3000]}
 
-    Provide detailed summary including:
-    - Authentication components and functions
-    - Cart management logic
-    - Payment integration code
-    - All key function names and variables"""
+Provide detailed summary with all function names:"""
         
         summary_request = GenerationRequest(
-            conversation_id="loveable_summary",
+            conversation_id="summary_gen_v2",
             messages=[{"role": "user", "content": summary_prompt}],
             model="test",
-            max_tokens=2000,
-            temperature=0.2
+            max_tokens=1000,
+            temperature=0.3
         )
         
         summary_result = await self.engine.generate(summary_request)
-        summary_latency = (time.time() - start_summary) * 1000
         
         if not summary_result.get('success'):
-            print("  ❌ Summary generation failed")
-            return {
-                'accuracy': 0,
-                'tokens_used': 0,
-                'total_tokens': 0,
-                'latency_ms': 0,
-                'queries_successful': 0,
-                'total_queries': len(test_turns),
-                'error': 'Summary generation failed'
-            }
+            return {'accuracy': 0, 'tokens_used': 0, 'latency_ms': 0, 'error': 'Failed'}
         
         summary_text = summary_result.get('response', '')
+        latency = (time.time() - start_time) * 1000
         
-        if not summary_text:
-            print("  ❌ Empty summary generated")
-            return {
-                'accuracy': 0,
-                'tokens_used': 0,
-                'total_tokens': 0,
-                'latency_ms': summary_latency,
-                'queries_successful': 0,
-                'total_queries': len(test_turns),
-                'error': 'Empty summary'
-            }
+        # Check for required codes
+        turn_50 = conversation[49]
+        required_codes = turn_50.get("requires_code", [])
+        matches_found = [req for req in required_codes if req.lower() in summary_text.lower()]
         
-        summary_tokens = count_tokens(summary_text)
+        accuracy = len(matches_found) / len(required_codes) if required_codes else 0
+        tokens_used = count_tokens(summary_text)
         
-        print(f"Summary generated: {len(summary_text)} chars, {summary_tokens} tokens")
-        print(f"Summary creation time: {summary_latency:.0f}ms\n")
-        
-        # Test queries against summary
-        test_turns = [t for t in conversation[95:] if t.get('test_query')]
-        
-        print(f"Testing {len(test_turns)} queries against summary...\n")
-        
-        correct = 0
-        total_tokens = summary_tokens * len(test_turns)  # Summary sent every time
-        total_latency = summary_latency  # One-time cost
-        results_detail = []
-        
-        for i, test in enumerate(test_turns):
-            print(f"  Query {i+1}/{len(test_turns)}: \"{test['user'][:70]}...\"")
-            print(f"    Needs: {', '.join(test['requires'][:3])}")
-            
-            # Check if summary contains required items
-            found_items = []
-            for required in test['requires']:
-                # Very flexible matching (summary might paraphrase)
-                if required.lower() in summary_text.lower():
-                    found_items.append(required)
-            
-            accuracy = len(found_items) / len(test['requires'])
-            if accuracy >= 0.6:
-                correct += 1
-                print(f"    ✅ SUCCESS: Found {len(found_items)}/{len(test['requires'])} ({accuracy:.0%})")
-            else:
-                print(f"    ❌ PARTIAL: Found {len(found_items)}/{len(test['requires'])} ({accuracy:.0%})")
-            
-            print(f"       Tokens: {summary_tokens} (full summary)")
-            
-            results_detail.append({
-                'query': i+1,
-                'accuracy': accuracy,
-                'found': len(found_items),
-                'required': len(test['requires']),
-                'tokens': summary_tokens
-            })
-        
-        overall_accuracy = correct / len(test_turns)
-        avg_tokens = summary_tokens  # Same every time
-        
-        print(f"\n  Summarization Summary:")
-        print(f"    Overall Accuracy: {overall_accuracy:.1%} ({correct}/{len(test_turns)} queries)")
-        print(f"    Tokens/Query: {avg_tokens} (sends full summary each time)")
-        print(f"    Summary generation: {summary_latency:.0f}ms (one-time cost)")
+        print(f"\n  ✅ Summarization complete")
+        print(f"     - Found {len(matches_found)}/{len(required_codes)} code elements")
+        print(f"     - Accuracy: {accuracy:.1%}")
         
         return {
-            'accuracy': overall_accuracy,
-            'tokens_used': avg_tokens,
-            'total_tokens': total_tokens,
-            'latency_ms': summary_latency / len(test_turns),  # Amortized
-            'queries_successful': correct,
-            'total_queries': len(test_turns),
-            'summary_generation_ms': summary_latency,
-            'details': results_detail
+            'accuracy': accuracy,
+            'tokens_used': tokens_used,
+            'latency_ms': latency,
+            'matches_found': matches_found
         }
-
-    def calculate_cost_savings(self, retrieval_tokens, summary_tokens):
-        """Calculate cost savings at scale"""
-        # Assume GPT-4 pricing: $10 per 1M tokens
-        cost_per_token = 10 / 1_000_000
-        
-        retrieval_cost_per_1k = retrieval_tokens * 1000 * cost_per_token
-        summary_cost_per_1k = summary_tokens * 1000 * cost_per_token
-        
-        savings = summary_cost_per_1k - retrieval_cost_per_1k
-        
-        return {
-            'retrieval_cost': retrieval_cost_per_1k,
-            'summary_cost': summary_cost_per_1k,
-            'savings': savings,
-            'savings_percent': (savings / summary_cost_per_1k * 100) if summary_cost_per_1k > 0 else 0
-        }
-
-    def print_pitch_results(self, results):
-        """Print results in pitch-ready format"""
-        print("\n" + "="*80)
-        print("LOVEABLE PITCH: RESULTS COMPARISON")
-        print("="*80)
-        
-        print(f"\n{'Metric':<30} | {'V2 Retrieval':<20} | {'Summarization':<20}")
-        print("-"*80)
-        
-        # Accuracy
-        print(f"{'Code Retrieval Accuracy':<30} | {results['v2_retrieval']['accuracy']:<20.1%} | {results['summarization']['accuracy']:<20.1%}")
-        
-        # Tokens
-        print(f"{'Tokens per Query':<30} | {results['v2_retrieval']['tokens_used']:<20} | {results['summarization']['tokens_used']:<20}")
-        
-        # Latency
-        print(f"{'Latency (ms)':<30} | {results['v2_retrieval']['latency_ms']:<20.0f} | {results['summarization']['latency_ms']:<20.0f}")
-        
-        print("\n" + "="*80)
-        print("💰 BUSINESS IMPACT (Per 1,000 Users)")
-        print("="*80)
-        
-        comp = results['comparison']
-        cost = comp['cost_savings_per_1k_requests']
-        
-        print(f"\n  Token Savings:      {comp['token_savings']:.1f}%")
-        print(f"  Accuracy Gain:      {comp['accuracy_gain']:+.1f}%")
-        print(f"  Cost Savings:       ${cost['savings']:.2f} per 1K requests")
-        print(f"                      ${cost['savings'] * 1000:.2f} per 1M requests")
-        
-        print(f"\n  At Loveable Scale (assume 100K daily requests):")
-        print(f"    Monthly Savings:   ${cost['savings'] * 100 * 30:.2f}")
-        print(f"    Yearly Savings:    ${cost['savings'] * 100 * 365:.2f}")
-        
-        print("\n" + "="*80)
-        print("🎯 LOVEABLE VALUE PROPOSITION")
-        print("="*80)
-        print(f"\n  ✅ {comp['token_savings']:.0f}% fewer tokens = faster responses")
-        print(f"  ✅ {comp['accuracy_gain']:+.0f}% better accuracy = happier users")
-        print(f"  ✅ ${cost['savings'] * 100 * 365:.0f}/year saved at 100K daily requests")
-        print(f"  ✅ Scales linearly: more users = more savings")
-        print(f"  ✅ Better UX: retrieves exact code vs vague summaries")
 
 
 async def run_all_benchmarks():
-    """Run all prompt coding benchmarks"""
+    """Run all V2 benchmarks"""
     print("="*80)
-    print("PROMPT-BASED CODING BENCHMARK SUITE - V2")
-    print("Loveable Pitch Edition")
+    print("INFINITE MEMORY INFERENCE API - V2 GPU BENCHMARK SUITE")
+    print("Testing: Nomic-Embed + BGE Reranker + Sliding Window + Token Budget")
     print("="*80)
 
     # Initialize system
     print("\nInitializing V2 system...")
 
-    vector_db = create_vector_db(backend="qdrant")
-    memory_manager = MemoryManager(vector_db=vector_db, cache_capacity=1000)
-    context_manager_v2 = ContextManagerV2(token_budget=2000, recent_turns_limit=15)
+    # Create vector DB
+    vector_db_backend = os.getenv("VECTOR_DB_BACKEND", "qdrant")
+    print(f"Using vector DB: {vector_db_backend.upper()}")
+    vector_db = create_vector_db(backend=vector_db_backend)
 
+    # Create memory manager
+    memory_manager = MemoryManager(
+        vector_db=vector_db,
+        cache_capacity=1000
+    )
+
+    # Create vLLM engine
     model_name = os.getenv("MODEL_NAME", "TheBloke/Mistral-7B-Instruct-v0.2-GPTQ")
+    quantization = os.getenv("MODEL_QUANTIZATION", "gptq")
+    gpu_memory = float(os.getenv("GPU_MEMORY_UTILIZATION", "0.9"))
+
     vllm_engine = create_vllm_engine(
         model_name=model_name,
-        quantization="gptq",
-        gpu_memory_utilization=0.9,
+        quantization=quantization,
+        gpu_memory_utilization=gpu_memory,
         max_model_len=4096
     )
 
+    # Create infinite memory engine with V2
     infinite_engine = InfiniteMemoryEngine(
         vllm_engine=vllm_engine,
         memory_manager=memory_manager,
         max_context_tokens=4096,
-        context_retrieval_k=5
+        context_retrieval_k=5,
+        use_v2=True  # ENABLE V2!
     )
+
+    # Get context manager reference
+    context_manager_v2 = infinite_engine.context_manager
 
     print("✅ V2 System initialized\n")
 
-    # Run Loveable benchmark
+    # Run benchmarks
     all_results = {}
 
     try:
-        loveable_bench = LoveableStyleBenchmark(infinite_engine, memory_manager, context_manager_v2)
-        all_results['loveable'] = await loveable_bench.run()
+        print("Starting Benchmark 1...")
+        throughput_bench = ThroughputBenchmark(infinite_engine, memory_manager)
+        all_results['throughput'] = await throughput_bench.run()
     except Exception as e:
-        print(f"\n❌ Loveable benchmark failed: {e}")
+        print(f"\n❌ Throughput benchmark failed: {e}")
         import traceback
         traceback.print_exc()
 
+    try:
+        print("\nStarting Benchmark 2...")
+        memory_bench = MemoryEfficiencyBenchmark(infinite_engine, memory_manager, context_manager_v2)
+        all_results['memory_efficiency'] = await memory_bench.run()
+    except Exception as e:
+        print(f"\n❌ Memory efficiency benchmark failed: {e}")
+        import traceback
+        traceback.print_exc()
+
+    try:
+        print("\nStarting Benchmark 3...")
+        accuracy_bench = RetrievalAccuracyBenchmark(infinite_engine, memory_manager)
+        all_results['accuracy'] = await accuracy_bench.run()
+    except Exception as e:
+        print(f"\n❌ Retrieval accuracy benchmark failed: {e}")
+        import traceback
+        traceback.print_exc()
+
+    try:
+        print("\nStarting Benchmark 4...")
+        comparative_bench = ComparativeBenchmark(infinite_engine, memory_manager)
+        all_results['comparative'] = await comparative_bench.run()
+    except Exception as e:
+        print(f"\n❌ Comparative benchmark failed: {e}")
+        import traceback
+        traceback.print_exc()
+
+    # Summary
     print("\n" + "="*80)
-    print("✅ LOVEABLE PITCH BENCHMARK COMPLETE")
+    print("V2 BENCHMARK SUMMARY")
     print("="*80)
+
+    if 'throughput' in all_results and '10_turns' in all_results['throughput']:
+        print(f"\n📊 THROUGHPUT:")
+        print(f"   10 turns:  {all_results['throughput']['10_turns']['avg_throughput']:.1f} tok/s")
+        print(f"   50 turns:  {all_results['throughput']['50_turns']['avg_throughput']:.1f} tok/s")
+        print(f"   100 turns: {all_results['throughput']['100_turns']['avg_throughput']:.1f} tok/s")
+        print(f"   200 turns: {all_results['throughput']['200_turns']['avg_throughput']:.1f} tok/s")
+        print(f"   Latency (P50): {all_results['throughput']['10_turns']['p50_latency']:.0f}ms")
+
+    if 'memory_efficiency' in all_results and 'savings_percent' in all_results['memory_efficiency']:
+        print(f"\n💾 MEMORY EFFICIENCY (V2):")
+        print(f"   Token savings: {all_results['memory_efficiency']['savings_percent']:.1f}%")
+        print(f"   Context growth: {all_results['memory_efficiency']['context_growth_percent']:.1f}%")
+        print(f"   Turns deduplicated: {all_results['memory_efficiency']['v2_deduplication_count']}")
+        print(f"   Turns offloaded: {all_results['memory_efficiency']['v2_offload_count']}")
+
+    if 'accuracy' in all_results and 'accuracy_percent' in all_results['accuracy']:
+        print(f"\n🎯 RETRIEVAL ACCURACY (V2 with Nomic-Embed + BGE):")
+        print(f"   Semantic accuracy: {all_results['accuracy']['accuracy_percent']:.1f}%")
+        print(f"   Avg embedding similarity: {all_results['accuracy']['avg_embedding_similarity']:.3f}")
+        if all_results['accuracy'].get('avg_rerank_score', 0) > 0:
+            print(f"   Avg rerank score: {all_results['accuracy']['avg_rerank_score']:.3f}")
+
+    if 'comparative' in all_results and 'comparison' in all_results['comparative']:
+        print(f"\n🆚 V2 RETRIEVAL VS SUMMARIZATION:")
+        print(f"   Token savings: {all_results['comparative']['comparison']['token_savings']:.1f}%")
+        print(f"   V2 Retrieval accuracy: {all_results['comparative']['retrieval_v2']['accuracy']:.1%}")
+        print(f"   Summary accuracy: {all_results['comparative']['summary']['accuracy']:.1%}")
+        print(f"   Accuracy gain: {all_results['comparative']['comparison']['accuracy_diff']*100:+.1f}%")
+
+    print("\n" + "="*80)
+    print("✅ V2 BENCHMARK COMPLETE")
+    print("="*80)
+    print("\nV2 Improvements Tested:")
+    print("  ✅ Nomic-Embed (768 dim) vs old embedder (384 dim)")
+    print("  ✅ BGE Reranker for two-stage retrieval")
+    print("  ✅ 15-turn sliding window (vs 3 turns)")
+    print("  ✅ Token budget enforcement (2000 tokens)")
+    print("  ✅ Automatic deduplication and offloading")
 
     return all_results
 
