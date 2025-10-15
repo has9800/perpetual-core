@@ -197,10 +197,36 @@ def create_todo():
             print("   ❌ Summary generation failed")
             return {'accuracy': 0, 'tokens': 0, 'latency': latency, 'found_elements': 0}
         
-        # Extract summary text
-        summary = result.get('text') or result.get('output') or ""
+        # DEBUG: Print what keys are in result
+        print(f"   DEBUG: Result keys: {result.keys()}")
+        
+        # Extract summary text - try all possible locations
+        summary = None
+        
+        # Try direct keys
+        for key in ['text', 'output', 'response', 'content', 'generated_text']:
+            if key in result and result[key]:
+                summary = result[key]
+                print(f"   DEBUG: Found summary in result['{key}']")
+                break
+        
+        # Try metadata
         if not summary and 'metadata' in result:
-            summary = result['metadata'].get('generated_text', '')
+            print(f"   DEBUG: Metadata keys: {result['metadata'].keys()}")
+            for key in ['text', 'generated_text', 'output', 'response']:
+                if key in result['metadata'] and result['metadata'][key]:
+                    summary = result['metadata'][key]
+                    print(f"   DEBUG: Found summary in metadata['{key}']")
+                    break
+        
+        # If still not found, print full result structure
+        if not summary:
+            print(f"   ❌ Could not find summary text!")
+            print(f"   DEBUG: Full result: {result}")
+            return {'accuracy': 0, 'tokens': 0, 'latency': latency, 'found_elements': 0}
+        
+        # Show preview
+        print(f"   DEBUG: Summary preview: {summary[:200]}...")
         
         # Calculate accuracy
         found = sum(1 for elem in self.jwt_elements if elem.lower() in summary.lower())
@@ -220,6 +246,7 @@ def create_todo():
             'latency': latency,
             'found_elements': found
         }
+
     
     def _print_results(self, retrieval: Dict, summary: Dict, savings: float):
         """Print comparison results"""
