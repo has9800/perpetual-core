@@ -1,16 +1,12 @@
 """
-vLLM Wrapper with Infinite Memory - V2 PRODUCTION VERSION
-FEATURES: Nomic-Embed + BGE Reranker + Sliding Window + Token Budget
+vLLM Wrapper with Simple Memory - PRODUCTION
+Simple V2: 15-turn sliding window + Qdrant long-term + smart reranking
 """
 
 import asyncio
 from typing import List, Dict, Optional
 import time
 from dataclasses import dataclass
-
-# V2 imports
-from context_manager_v2 import ContextManagerV2
-from token_counter import count_tokens
 
 
 @dataclass
@@ -29,10 +25,10 @@ def create_vllm_engine(model_name: str,
                        quantization: str = "gptq",
                        gpu_memory_utilization: float = 0.9,
                        max_model_len: int = 4096):
-    """Create real vLLM engine using high-level API"""
+    """Create vLLM engine"""
     from vllm import LLM
 
-    print(f"Loading vLLM engine: {model_name}")
+    print(f"Loading vLLM: {model_name}")
     print(f"  Quantization: {quantization}")
     print(f"  Max length: {max_model_len}")
     print(f"  GPU memory: {gpu_memory_utilization * 100}%")
@@ -46,41 +42,39 @@ def create_vllm_engine(model_name: str,
         dtype="float16"
     )
 
-    print("✅ vLLM engine loaded successfully")
+    print("✅ vLLM loaded")
     return llm
 
 
 class InfiniteMemoryEngine:
-    """vLLM engine with infinite conversation memory (V2)"""
+    """vLLM with simple short-term + long-term memory"""
 
     def __init__(self,
                  vllm_engine,
                  memory_manager,
                  max_context_tokens: int = 4096,
                  context_retrieval_k: int = 3,
-                 use_v2: bool = True):
+                 use_simple_memory: bool = True):
         self.engine = vllm_engine
         self.memory = memory_manager
         self.max_context_tokens = max_context_tokens
         self.context_retrieval_k = context_retrieval_k
         
-        # V2: Create context manager
-        if use_v2:
-            self.context_manager = ContextManagerV2(
-                token_budget=2000,
-                recent_turns_limit=15
-            )
-            print("✅ V2 Context Manager enabled (15-turn sliding window, 2000 token budget)")
+        # Simple context manager
+        if use_simple_memory:
+            from context_manager_simple import SimpleContextManager
+            self.context_manager = SimpleContextManager(short_term_limit=15)
+            print("✅ Simple Memory enabled: 15-turn sliding window + Qdrant")
         else:
             self.context_manager = None
-            print("⚠️  V2 Context Manager disabled (using v1)")
+            print("⚠️  Simple Memory disabled")
         
         self.generation_count = 0
         self.total_tokens_generated = 0
         self.context_retrievals = 0
 
     async def generate(self, request: GenerationRequest) -> Dict:
-        """Generate response with V2 memory management"""
+        """Generate with simple memory"""
         start_time = time.time()
 
         try:
@@ -95,91 +89,69 @@ class InfiniteMemoryEngine:
             if not user_query:
                 user_query = "continue"
 
-            # V2: Check if we need to offload old turns
-            if self.context_manager:
-                turns_to_offload = self.context_manager.get_turns_for_offload(request.conversation_id)
-                if turns_to_offload:
-                    for turn in turns_to_offload:
-                        self.memory.add_turn(
-                            conversation_id=request.conversation_id,
-                            text=turn['user'],
-                            metadata={
-                                'response': turn['assistant'],
-                                'timestamp': turn.get('timestamp', time.time())
-                            }
-                        )
-                    self.context_manager.prune_offloaded_turns(
-                        request.conversation_id, 
-                        len(turns_to_offload)
-                    )
-
-            # Retrieve context from vector DB
+            # Retrieve from long-term memory (Qdrant with smart reranking)
             context_result = self.memory.retrieve_context(
                 conversation_id=request.conversation_id,
                 query=user_query,
                 top_k=self.context_retrieval_k
             )
 
-            retrieved_context = context_result.get('results', [])
+            retrieved_long_term = context_result.get('results', [])
             self.context_retrievals += 1
 
-            # V2: Build context with token budget
+            # Build context: short-term (15 turns) + long-term (retrieved)
             if self.context_manager:
-                formatted_context, context_meta = self.context_manager.get_context_for_llm(
+                formatted_context, context_meta = self.context_manager.build_context(
                     conversation_id=request.conversation_id,
-                    retrieved_context=retrieved_context
+                    retrieved_long_term=retrieved_long_term
                 )
                 
-                prompt = self._build_prompt_v2(
+                prompt = self._build_prompt(
                     messages=request.messages,
                     formatted_context=formatted_context,
                     user_query=user_query
                 )
             else:
-                # Fallback: Old method
-                context_meta = {
-                    'total_tokens': 0,
-                    'retrieved_turns': len(retrieved_context),
-                    'recent_turns': 0,
-                    'budget_utilization': 0
-                }
-                prompt = self._build_prompt(
-                    messages=request.messages,
-                    recent_turns=self.memory.get_recent_turns(request.conversation_id, limit=3),
-                    retrieved_context=retrieved_context,
-                    user_query=user_query
-                )
+                # Fallback
+                formatted_context = ""
+                context_meta = {'short_term_turns': 0, 'long_term_retrieved': 0}
+                prompt = f"User: {user_query}\nAssistant:"
 
-            # Generate response
+            # Generate
             response_text = await self._call_vllm(
                 prompt=prompt,
                 max_tokens=request.max_tokens,
                 temperature=request.temperature
             )
 
-            # V2: Store in context manager
+            # Store: short-term (sliding window) + long-term (Qdrant)
             if self.context_manager:
+                # Add to short-term (auto-evicts oldest if > 15)
                 self.context_manager.add_turn(
                     conversation_id=request.conversation_id,
                     user_query=user_query,
                     assistant_response=response_text,
+                    metadata={'user_id': request.user_id, 'model': request.model}
+                )
+                
+                # Also store in long-term for future retrieval
+                self.memory.add_turn(
+                    conversation_id=request.conversation_id,
+                    text=user_query,
                     metadata={
-                        'user_id': request.user_id,
-                        'model': request.model
+                        'response': response_text, 
+                        'timestamp': time.time(),
+                        'turn_number': self.generation_count
                     }
                 )
 
-            # Update metrics
+            # Metrics
             self.generation_count += 1
             tokens_generated = len(response_text.split())
             self.total_tokens_generated += tokens_generated
             latency = (time.time() - start_time) * 1000
 
-            # Get conversation length
-            if self.context_manager:
-                conv_length = self.context_manager.get_recent_turns_count(request.conversation_id)
-            else:
-                conv_length = self.memory.get_conversation_length(request.conversation_id)
+            conv_length = self.context_manager.get_turn_count(request.conversation_id) if self.context_manager else 0
 
             return {
                 'response': response_text,
@@ -187,10 +159,8 @@ class InfiniteMemoryEngine:
                 'metadata': {
                     'latency_ms': latency,
                     'tokens_generated': tokens_generated,
-                    'context_tokens': context_meta.get('total_tokens', 0),
-                    'context_retrieved': context_meta.get('retrieved_turns', 0),
-                    'recent_turns_used': context_meta.get('recent_turns', 0),
-                    'budget_utilization': context_meta.get('budget_utilization', 0),
+                    'short_term_turns': context_meta.get('short_term_turns', 0),
+                    'long_term_retrieved': context_meta.get('long_term_retrieved', 0),
                     'conversation_turn': conv_length
                 },
                 'success': True
@@ -205,9 +175,8 @@ class InfiniteMemoryEngine:
                 'conversation_id': request.conversation_id
             }
 
-    async def _call_vllm(self, prompt: str, max_tokens: int, 
-                        temperature: float) -> str:
-        """Call vLLM using high-level API"""
+    async def _call_vllm(self, prompt: str, max_tokens: int, temperature: float) -> str:
+        """Call vLLM"""
         from vllm import SamplingParams
 
         sampling_params = SamplingParams(
@@ -218,76 +187,27 @@ class InfiniteMemoryEngine:
         )
 
         loop = asyncio.get_event_loop()
-        outputs = await loop.run_in_executor(
-            None,
-            self.engine.generate,
-            [prompt],
-            sampling_params
-        )
+        outputs = await loop.run_in_executor(None, self.engine.generate, [prompt], sampling_params)
 
         if outputs and len(outputs) > 0:
             return outputs[0].outputs[0].text.strip()
         return ""
 
-    def _build_prompt_v2(self, 
-                         messages: List[Dict],
-                         formatted_context: str,
-                         user_query: str) -> str:
-        """Build prompt using V2 formatted context"""
+    def _build_prompt(self, messages: List[Dict], formatted_context: str, user_query: str) -> str:
+        """Build prompt"""
         prompt_parts = []
 
-        # Add system message if present
+        # System message
         system_msg = next((m['content'] for m in messages if m['role'] == 'system'), None)
         if system_msg:
             prompt_parts.append(f"System: {system_msg}")
             prompt_parts.append("")
 
-        # Add V2 formatted context (already optimized with budget)
+        # Context (short-term + long-term)
         if formatted_context:
             prompt_parts.append(formatted_context)
-            prompt_parts.append("")
 
-        # Add current query
-        prompt_parts.append(f"User: {user_query}")
-        prompt_parts.append("Assistant:")
-
-        return "\n".join(prompt_parts)
-
-    def _build_prompt(self, 
-                     messages: List[Dict],
-                     recent_turns: List[str],
-                     retrieved_context: List[Dict],
-                     user_query: str) -> str:
-        """Build prompt with retrieved context (V1 fallback)"""
-        prompt_parts = []
-
-        # Add system message if present
-        system_msg = next((m['content'] for m in messages if m['role'] == 'system'), None)
-        if system_msg:
-            prompt_parts.append(f"System: {system_msg}")
-            prompt_parts.append("")
-
-        # Add retrieved relevant context (if high similarity)
-        if retrieved_context:
-            high_quality = [ctx for ctx in retrieved_context if ctx.get('similarity', 0) > 0.5]
-            if high_quality:
-                prompt_parts.append("# Relevant context from earlier in conversation:")
-                for ctx in high_quality[:2]:
-                    query = ctx['text']
-                    response = ctx['metadata'].get('response', '')
-                    if response:
-                        prompt_parts.append(f"Previously - User: {query[:100]}...")
-                        prompt_parts.append(f"Assistant: {response[:150]}...")
-                prompt_parts.append("")
-
-        # Add recent turns (last 3 exchanges)
-        if recent_turns:
-            prompt_parts.append("# Recent conversation:")
-            for turn in recent_turns[-3:]:
-                prompt_parts.append(turn)
-            prompt_parts.append("")
-
-        # Add current query
+        # Current query
         prompt_parts.append(f"User: {user_query}")
         prompt_parts.append("Assistant:")
 
@@ -310,8 +230,7 @@ class InfiniteMemoryEngine:
             'memory_stats': memory_stats
         }
         
-        # Add V2 stats if context manager exists
         if self.context_manager:
-            stats['context_v2_stats'] = self.context_manager.get_stats()
+            stats['simple_memory_stats'] = self.context_manager.get_stats()
         
         return stats
