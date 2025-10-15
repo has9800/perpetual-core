@@ -1,6 +1,9 @@
 """
-Standalone Coding Benchmark: Retrieval vs Summarization
-Tests code recall across multiple query types
+Coding Benchmark: Retrieval vs Summarization for Context Management
+Simulates what coding agents do when context window fills up
+
+Traditional approach: Summarize old context when window fills
+Our approach: Retrieve exact code from vector DB
 """
 
 import asyncio
@@ -9,7 +12,6 @@ from typing import List, Dict
 import sys
 import os
 
-# Add core to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'core'))
 
 from vector_db_adapters import create_vector_db
@@ -18,13 +20,13 @@ from vllm_wrapper_production import InfiniteMemoryEngine, create_vllm_engine, Ge
 
 
 class CodingBenchmark:
-    """Compare retrieval vs summarization for code recall"""
+    """Compare context management strategies for coding agents"""
     
     def __init__(self, engine: InfiniteMemoryEngine, memory: MemoryManager):
         self.engine = engine
         self.memory = memory
         
-        # JWT code at turn 10
+        # JWT code at turn 10 (what we need to recall later)
         self.jwt_code = """from flask_jwt_extended import JWTManager, create_access_token, jwt_required
 
 app.config['JWT_SECRET_KEY'] = 'super-secret-key'
@@ -37,219 +39,318 @@ def login():
     if username == 'admin' and password == 'password':
         token = create_access_token(identity=username)
         return jsonify(access_token=token)
-    return jsonify({'error': 'Invalid'}), 401"""
+    return jsonify({'error': 'Invalid credentials'}), 401
+
+@app.route('/todos', methods=['POST'])
+@jwt_required()
+def create_todo():
+    data = request.json
+    todo = Todo(title=data['title'])
+    db.session.add(todo)
+    db.session.commit()
+    return jsonify({'id': todo.id}), 201"""
         
-        self.jwt_elements = ['create_access_token', 'jwt_required', 'login', 'JWT_SECRET_KEY']
-        
-        # Test scenarios
-        self.scenarios = [
-            {
-                'name': 'Direct keyword match',
-                'query': 'Show me the JWT authentication code',
-            },
-            {
-                'name': 'Semantic understanding',
-                'query': 'How do we secure the API endpoints?',
-            },
-            {
-                'name': 'Conceptual recall',
-                'query': 'What prevents unauthorized access to protected routes?',
-            }
-        ]
+        self.jwt_elements = ['create_access_token', 'jwt_required', 'JWT_SECRET_KEY', '@app.route(\'/login\'']
     
     async def run(self) -> Dict:
-        """Run benchmark"""
+        """Run benchmark comparing both approaches"""
         print("\n" + "="*80)
-        print("CODING BENCHMARK: Retrieval vs Summarization")
+        print("CODING AGENT CONTEXT MANAGEMENT BENCHMARK")
         print("="*80)
+        print("\nSimulating 50-turn coding session where user needs to recall")
+        print("JWT code from turn 10 at turn 50")
+        print("\nTraditional: Summarize turns 1-40, keep recent 41-49")
+        print("Our approach: Retrieve exact turn 10 from vector DB")
         
-        all_results = []
+        # Generate conversation
+        turns = self._generate_conversation()
+        user_query = "Modify the JWT login function to also return the user's email address"
         
-        for scenario in self.scenarios:
-            print(f"\n{'='*80}")
-            print(f"SCENARIO: {scenario['name']}")
-            print(f"Query: '{scenario['query']}'")
-            print(f"{'='*80}")
-            
-            turns = self._generate_turns(scenario['query'])
-            
-            print("\n1. RETRIEVAL...")
-            retrieval = await self._test_retrieval(turns)
-            
-            print("\n2. SUMMARIZATION...")
-            summary = await self._test_summarization(turns)
-            
-            all_results.append({
-                'scenario': scenario['name'],
-                'retrieval': retrieval,
-                'summary': summary
-            })
+        print(f"\nTurn 50 query: '{user_query}'")
+        print("(Requires exact JWT code from turn 10 to answer correctly)")
         
-        self._print_results(all_results)
-        return {'scenarios': all_results}
+        # Test 1: Your retrieval approach
+        print("\n" + "="*80)
+        print("APPROACH 1: RETRIEVAL (Your System)")
+        print("="*80)
+        retrieval_result = await self._test_retrieval_approach(turns, user_query)
+        
+        # Test 2: Traditional summarization approach  
+        print("\n" + "="*80)
+        print("APPROACH 2: SUMMARIZATION (Traditional Coding Agents)")
+        print("="*80)
+        summary_result = await self._test_summary_approach(turns, user_query)
+        
+        # Compare
+        self._print_comparison(retrieval_result, summary_result)
+        
+        return {
+            'retrieval': retrieval_result,
+            'summarization': summary_result
+        }
     
-    def _generate_turns(self, query: str) -> List[Dict]:
-        """Generate 50 turns"""
+    def _generate_conversation(self) -> List[Dict]:
+        """Generate 50-turn coding conversation"""
         turns = []
         
         for i in range(50):
-            if i == 9:  # Turn 10 (index 9)
+            turn_num = i + 1
+            
+            if turn_num == 10:
+                # Important: JWT authentication code
                 turns.append({
-                    'user': 'Add JWT authentication',
+                    'turn': turn_num,
+                    'user': 'Add JWT authentication to the /login and /todos endpoints',
                     'assistant': self.jwt_code
                 })
-            elif i == 49:  # Turn 50 (index 49)
+            elif turn_num < 10:
+                # Early turns: basic setup
                 turns.append({
-                    'user': query,
-                    'assistant': 'placeholder'
+                    'turn': turn_num,
+                    'user': f'Create basic Flask endpoint {turn_num}',
+                    'assistant': f'@app.route("/endpoint{turn_num}")\ndef endpoint{turn_num}():\n    return "OK"'
                 })
             else:
+                # Later turns: various features (filler)
                 turns.append({
-                    'user': f'Add feature {i+1}',
-                    'assistant': f'def feature_{i+1}():\n    pass'
+                    'turn': turn_num,
+                    'user': f'Add feature {turn_num}',
+                    'assistant': f'def feature_{turn_num}():\n    # Feature {turn_num}\n    return True'
                 })
         
         return turns
     
-    async def _test_retrieval(self, turns: List[Dict]) -> Dict:
-        """Test retrieval"""
-        conv_id = f"ret_{time.time()}"
+    async def _test_retrieval_approach(self, turns: List[Dict], user_query: str) -> Dict:
+        """Test retrieval-based context (your approach)"""
+        conv_id = f"retrieval_{time.time()}"
         
-        # Store 49 turns
-        for i in range(49):
+        # Store all 49 turns in vector DB
+        print("Storing 49 turns in vector DB...")
+        for turn in turns[:49]:
             self.memory.add_turn(
                 conversation_id=conv_id,
-                text=turns[i]['user'],
-                metadata={'response': turns[i]['assistant']}
+                text=turn['user'],
+                metadata={'response': turn['assistant'], 'turn': turn['turn']}
             )
         
-        await asyncio.sleep(2)
+        await asyncio.sleep(2)  # Wait for indexing
         
-        # Query
+        # Retrieve relevant context
+        print("Retrieving relevant context...")
         start = time.time()
-        context = self.memory.retrieve_context(conv_id, turns[49]['user'], top_k=3)
-        latency = time.time() - start
+        context = self.memory.retrieve_context(conv_id, user_query, top_k=3)
+        retrieval_time = time.time() - start
         
-        # Check results
-        text = ""
-        for r in context.get('results', []):
-            text += r.get('text', '') + " " + r.get('metadata', {}).get('response', '') + " "
+        # Build context for model
+        retrieved_turns = []
+        context_text = ""
+        for result in context.get('results', []):
+            turn_num = result['metadata'].get('turn')
+            retrieved_turns.append(turn_num)
+            context_text += f"Turn {turn_num}:\n"
+            context_text += f"User: {result['text']}\n"
+            context_text += f"Assistant: {result['metadata'].get('response', '')}\n\n"
         
-        found = sum(1 for elem in self.jwt_elements if elem in text)
-        accuracy = found / len(self.jwt_elements)
+        # Add recent turns (last 3)
+        context_text += "Recent conversation:\n"
+        for turn in turns[46:49]:
+            context_text += f"Turn {turn['turn']}: {turn['user']}\n"
         
-        print(f"   Found: {found}/{len(self.jwt_elements)} elements")
-        print(f"   Accuracy: {accuracy:.1%}")
+        context_tokens = len(context_text) // 4
         
-        return {'accuracy': accuracy, 'tokens': 140, 'latency': latency, 'found': found}
-    
-    async def _test_summarization(self, turns: List[Dict]) -> Dict:
-        """Test summarization - gives summary BEST possible chance"""
+        print(f"  Retrieved turns: {retrieved_turns}")
+        print(f"  Context size: ~{context_tokens} tokens")
         
-        # Build history focusing on important parts
-        # Include turn 10 explicitly in a way that emphasizes it
-        history = []
-        for i in range(49):
-            if i == 9:  # Turn 10 - make it stand out
-                history.append(f"=== IMPORTANT: JWT AUTHENTICATION ===")
-                history.append(f"User: {turns[i]['user']}")
-                history.append(f"Assistant: {turns[i]['assistant']}")
-                history.append(f"=== END IMPORTANT CODE ===")
-            else:
-                # Summarize filler turns to save space
-                history.append(f"Turn {i+1}: {turns[i]['user'][:50]}")
-        
-        history_text = "\n".join(history)
-        
-        # Strong prompt emphasizing code preservation
-        prompt = f"""Extract ALL code snippets, function names, and technical details from this conversation.
+        # Ask model to answer with this context
+        print("Generating answer with retrieved context...")
+        prompt = f"""Based on this coding conversation context:
 
-{history_text}
+{context_text}
 
-List every function, import, configuration, and code element mentioned:"""
+User asks: {user_query}
+
+Provide the modified code:"""
         
         start = time.time()
         request = GenerationRequest(
-            conversation_id=f"sum_{time.time()}",
+            conversation_id=conv_id + "_gen",
             messages=[{"role": "user", "content": prompt}],
             model="test",
-            max_tokens=800,  # More tokens for better summary
-            temperature=0.1   # Lower temp for factual recall
+            max_tokens=400,
+            temperature=0.3
         )
         
         result = await self.engine.generate(request)
-        latency = time.time() - start
+        generation_time = time.time() - start
         
         if not result.get('success'):
-            print("   ❌ Failed")
-            return {'accuracy': 0, 'tokens': 0, 'latency': latency, 'found': 0}
+            print("  ❌ Generation failed")
+            return {'accuracy': 0, 'tokens': 0, 'latency': 0, 'found': 0}
         
-        # Get summary
-        summary = result.get('response') or result.get('text') or ""
+        answer = result.get('response') or result.get('text') or ""
         
-        if not summary:
-            print("   ❌ No summary")
-            return {'accuracy': 0, 'tokens': 0, 'latency': latency, 'found': 0}
-        
-        # Show what was generated
-        print(f"   Summary preview: {summary[:200]}...")
-        
-        # Check elements
-        found = sum(1 for elem in self.jwt_elements if elem.lower() in summary.lower())
+        # Check if answer contains JWT code elements
+        found = sum(1 for elem in self.jwt_elements if elem in answer)
         accuracy = found / len(self.jwt_elements)
-        tokens = len(summary) // 4
         
-        print(f"   Found: {found}/{len(self.jwt_elements)} elements")
-        print(f"   Accuracy: {accuracy:.1%}")
+        print(f"\n  ✅ Answer generated")
+        print(f"  Found {found}/{len(self.jwt_elements)} JWT elements in answer")
+        print(f"  Accuracy: {accuracy:.1%}")
+        print(f"  Answer preview: {answer[:150]}...")
         
-        return {'accuracy': accuracy, 'tokens': tokens, 'latency': latency, 'found': found}
+        return {
+            'accuracy': accuracy,
+            'context_tokens': context_tokens,
+            'retrieval_latency': retrieval_time,
+            'generation_latency': generation_time,
+            'total_latency': retrieval_time + generation_time,
+            'found_elements': found,
+            'retrieved_turn_10': 10 in retrieved_turns
+        }
     
-    def _print_results(self, results: List[Dict]):
-        """Print aggregate results"""
+    async def _test_summary_approach(self, turns: List[Dict], user_query: str) -> Dict:
+        """Test summary-based context (traditional approach)"""
+        
+        # Simulate hitting context limit at turn 40
+        # Summarize turns 1-40, keep recent turns 41-49
+        print("Simulating context window filling up...")
+        print("Summarizing turns 1-40 (traditional approach when hitting token limit)...")
+        
+        # Build history to summarize
+        history_to_summarize = []
+        for turn in turns[:40]:
+            history_to_summarize.append(f"Turn {turn['turn']}: {turn['user']}")
+            history_to_summarize.append(f"Response: {turn['assistant']}")
+        
+        history_text = "\n".join(history_to_summarize)
+        
+        # Generate summary
+        summary_prompt = f"""Summarize this coding conversation, preserving key technical details:
+
+{history_text[:3000]}
+
+Summary:"""
+        
+        start = time.time()
+        request = GenerationRequest(
+            conversation_id=f"summary_{time.time()}",
+            messages=[{"role": "user", "content": summary_prompt}],
+            model="test",
+            max_tokens=600,
+            temperature=0.3
+        )
+        
+        result = await self.engine.generate(request)
+        summary_time = time.time() - start
+        
+        if not result.get('success'):
+            print("  ❌ Summary generation failed")
+            return {'accuracy': 0, 'tokens': 0, 'latency': 0, 'found': 0}
+        
+        summary = result.get('response') or result.get('text') or ""
+        summary_tokens = len(summary) // 4
+        
+        print(f"  Summary generated ({summary_tokens} tokens)")
+        print(f"  Summary preview: {summary[:150]}...")
+        
+        # Build context: summary + recent turns
+        context_text = f"Summary of earlier conversation (turns 1-40):\n{summary}\n\n"
+        context_text += "Recent conversation:\n"
+        for turn in turns[40:49]:
+            context_text += f"Turn {turn['turn']}: {turn['user']}\n"
+        
+        context_tokens = len(context_text) // 4
+        
+        print(f"  Total context: ~{context_tokens} tokens (summary + recent turns)")
+        
+        # Ask model to answer with this context
+        print("Generating answer with summarized context...")
+        prompt = f"""Based on this coding conversation context:
+
+{context_text}
+
+User asks: {user_query}
+
+Provide the modified code:"""
+        
+        start = time.time()
+        request = GenerationRequest(
+            conversation_id=f"summary_gen_{time.time()}",
+            messages=[{"role": "user", "content": prompt}],
+            model="test",
+            max_tokens=400,
+            temperature=0.3
+        )
+        
+        result = await self.engine.generate(request)
+        generation_time = time.time() - start
+        
+        if not result.get('success'):
+            print("  ❌ Answer generation failed")
+            return {'accuracy': 0, 'tokens': context_tokens, 'latency': summary_time, 'found': 0}
+        
+        answer = result.get('response') or result.get('text') or ""
+        
+        # Check if answer contains JWT code elements
+        found = sum(1 for elem in self.jwt_elements if elem in answer)
+        accuracy = found / len(self.jwt_elements)
+        
+        print(f"\n  ✅ Answer generated")
+        print(f"  Found {found}/{len(self.jwt_elements)} JWT elements in answer")
+        print(f"  Accuracy: {accuracy:.1%}")
+        print(f"  Answer preview: {answer[:150]}...")
+        
+        return {
+            'accuracy': accuracy,
+            'context_tokens': context_tokens,
+            'summary_latency': summary_time,
+            'generation_latency': generation_time,
+            'total_latency': summary_time + generation_time,
+            'found_elements': found
+        }
+    
+    def _print_comparison(self, retrieval: Dict, summary: Dict):
+        """Print comparison results"""
         print("\n" + "="*80)
-        print("RESULTS")
+        print("RESULTS: Context Management Comparison")
         print("="*80)
         
-        # Averages
-        avg_ret_acc = sum(r['retrieval']['accuracy'] for r in results) / len(results)
-        avg_sum_acc = sum(r['summary']['accuracy'] for r in results) / len(results)
-        avg_ret_tok = sum(r['retrieval']['tokens'] for r in results) / len(results)
-        avg_sum_tok = sum(r['summary']['tokens'] for r in results) / len(results)
-        
-        print(f"\n{'Average Metrics':<30} | {'Retrieval':<15} | {'Summarization':<15}")
+        print(f"\n{'Metric':<30} | {'Retrieval':<15} | {'Summarization':<15}")
         print("-"*80)
-        print(f"{'Accuracy':<30} | {avg_ret_acc:<15.1%} | {avg_sum_acc:<15.1%}")
-        print(f"{'Tokens':<30} | {avg_ret_tok:<15.0f} | {avg_sum_tok:<15.0f}")
+        print(f"{'Code Accuracy':<30} | {retrieval['accuracy']:<15.1%} | {summary['accuracy']:<15.1%}")
+        print(f"{'Context Tokens':<30} | {retrieval['context_tokens']:<15} | {summary['context_tokens']:<15}")
+        print(f"{'Total Latency (ms)':<30} | {retrieval['total_latency']*1000:<15.0f} | {summary['total_latency']*1000:<15.0f}")
+        print(f"{'Elements Found':<30} | {retrieval['found_elements']}/{len(self.jwt_elements):<14} | {summary['found_elements']}/{len(self.jwt_elements):<14}")
         
-        # Per scenario
-        print(f"\n{'Scenario':<30} | {'Ret Acc':<12} | {'Sum Acc':<12}")
-        print("-"*80)
-        for r in results:
-            print(f"{r['scenario']:<30} | {r['retrieval']['accuracy']:<12.1%} | {r['summary']['accuracy']:<12.1%}")
+        # Calculate improvements
+        token_savings = ((summary['context_tokens'] - retrieval['context_tokens']) 
+                        / summary['context_tokens'] * 100) if summary['context_tokens'] > 0 else 0
+        accuracy_gain = (retrieval['accuracy'] - summary['accuracy']) * 100
         
-        # Key findings
-        acc_gain = (avg_ret_acc - avg_sum_acc) * 100
-        tok_savings = ((avg_sum_tok - avg_ret_tok) / avg_sum_tok * 100) if avg_sum_tok > 0 else 0
-        
-        print(f"\n{'='*80}")
+        print("\n" + "="*80)
         print("KEY FINDINGS:")
-        print(f"{'='*80}")
-        print(f"✓ Retrieval is {acc_gain:.1f}% more accurate")
-        print(f"✓ Retrieval uses {tok_savings:.1f}% fewer tokens")
-        print(f"✓ Retrieval finds exact code; summarization loses details")
+        print("="*80)
+        print(f"💰 Token Savings: {token_savings:.1f}%")
+        print(f"🎯 Accuracy Gain: {accuracy_gain:+.1f}%")
         
-        if avg_sum_acc < 0.3:
-            print(f"\n⚠️  Summarization found <30% of code elements")
-            print(f"   This demonstrates why retrieval is essential for coding tasks")
+        if retrieval.get('retrieved_turn_10'):
+            print(f"✓  Retrieval found exact JWT code from turn 10")
+        else:
+            print(f"✗  Retrieval did NOT retrieve turn 10")
+        
+        print(f"\n📊 Why this matters for coding agents:")
+        print(f"   - Coding needs EXACT code, not summaries")
+        print(f"   - Summarization loses variable names, function signatures")
+        print(f"   - Retrieval maintains code fidelity across long sessions")
 
 
 async def main():
     """Main function"""
     print("="*80)
-    print("STANDALONE CODING BENCHMARK")
+    print("CODING AGENT CONTEXT MANAGEMENT BENCHMARK")
     print("="*80)
     
-    print("\nInitializing...")
+    print("\nInitializing system...")
     
     vector_db = create_vector_db(backend=os.getenv("VECTOR_DB_BACKEND", "qdrant"))
     memory = MemoryManager(vector_db=vector_db, cache_capacity=1000)
@@ -268,14 +369,16 @@ async def main():
         context_retrieval_k=3
     )
     
-    print("✅ Ready\n")
+    print("✅ System initialized\n")
     
     benchmark = CodingBenchmark(engine, memory)
-    await benchmark.run()
+    results = await benchmark.run()
     
     print("\n" + "="*80)
-    print("✅ COMPLETE")
+    print("✅ BENCHMARK COMPLETE")
     print("="*80)
+    
+    return results
 
 
 if __name__ == "__main__":
