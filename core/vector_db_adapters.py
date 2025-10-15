@@ -13,8 +13,8 @@ class QdrantAdapter:
     """Qdrant adapter - Fast, production-ready vector DB with Nomic-Embed + Reranking"""
 
     def __init__(self, 
-                 persist_dir: str = "./data/qdrant_db",
-                 collection_name: str = "conversations"):
+                persist_dir: str = "./data/qdrant_db",
+                collection_name: str = "conversations"):
         """Initialize Qdrant client with Nomic-Embed and reranking support"""
         from qdrant_client import QdrantClient
         from qdrant_client.models import Distance, VectorParams, PointStruct
@@ -31,7 +31,7 @@ class QdrantAdapter:
         # V2: Initialize Nomic-Embed for embeddings (UPGRADED from all-MiniLM-L6-v2)
         from sentence_transformers import SentenceTransformer
         print("Loading Nomic-Embed-Text-v1.5 (768 dim)...")
-        self.encoder = SentenceTransformer('nomic-ai/nomic-embed-text-v1.5')
+        self.encoder = SentenceTransformer('nomic-ai/nomic-embed-text-v1.5', trust_remote_code=True)  # ADD THIS
         self.vector_size = 768  # Nomic-Embed dimension (upgraded from 384)
         print("✅ Nomic-Embed loaded")
 
