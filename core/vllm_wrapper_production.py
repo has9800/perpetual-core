@@ -9,6 +9,8 @@ import time
 from dataclasses import dataclass
 from context_manager_v2 import ContextManagerV2
 from token_counter import count_tokens
+from context_manager_v2 import ContextManagerV2
+from token_counter import count_tokens
 
 @dataclass
 class GenerationRequest:
@@ -76,7 +78,7 @@ class InfiniteMemoryEngine:
         start_time = time.time()
 
         try:
-            # Extract user query (last message)
+            # Extract user query
             user_query = ""
             if request.messages:
                 for msg in reversed(request.messages):
@@ -87,46 +89,61 @@ class InfiniteMemoryEngine:
             if not user_query:
                 user_query = "continue"
 
-            # V2: Offload older turns to vector DB (if needed)
-            turns_to_offload = self.context_manager.get_turns_for_offload(request.conversation_id)
-            if turns_to_offload:
-                for turn in turns_to_offload:
-                    self.memory.add_turn(
-                        conversation_id=request.conversation_id,
-                        text=turn['user'],
-                        metadata={
-                            'response': turn['assistant'],
-                            'timestamp': turn['timestamp']
-                        }
+            # V2: Check if we need to offload old turns
+            if hasattr(self, 'context_manager'):
+                turns_to_offload = self.context_manager.get_turns_for_offload(request.conversation_id)
+                if turns_to_offload:
+                    for turn in turns_to_offload:
+                        self.memory.add_turn(
+                            conversation_id=request.conversation_id,
+                            text=turn['user'],
+                            metadata={
+                                'response': turn['assistant'],
+                                'timestamp': turn['timestamp']
+                            }
+                        )
+                    self.context_manager.prune_offloaded_turns(
+                        request.conversation_id, 
+                        len(turns_to_offload)
                     )
-                # Prune from memory after successful offload
-                self.context_manager.prune_offloaded_turns(
-                    request.conversation_id, 
-                    len(turns_to_offload)
-                )
 
-            # V2: Retrieve relevant context from vector DB (with reranking)
+            # Retrieve context from vector DB
             context_result = self.memory.retrieve_context(
                 conversation_id=request.conversation_id,
                 query=user_query,
-                top_k=20  # Get 20 candidates for reranking
+                top_k=20  # Get 20 for reranking
             )
 
             retrieved_context = context_result.get('results', [])
             self.context_retrievals += 1
 
-            # V2: Build optimized context with token budget
-            formatted_context, context_meta = self.context_manager.get_context_for_llm(
-                conversation_id=request.conversation_id,
-                retrieved_context=retrieved_context
-            )
-
-            # Build final prompt
-            prompt = self._build_prompt_v2(
-                messages=request.messages,
-                formatted_context=formatted_context,
-                user_query=user_query
-            )
+            # V2: Build context with token budget (if context_manager exists)
+            if hasattr(self, 'context_manager'):
+                formatted_context, context_meta = self.context_manager.get_context_for_llm(
+                    conversation_id=request.conversation_id,
+                    retrieved_context=retrieved_context
+                )
+                
+                # Build prompt with V2 context
+                prompt = self._build_prompt_v2(
+                    messages=request.messages,
+                    formatted_context=formatted_context,
+                    user_query=user_query
+                )
+            else:
+                # Fallback: Old method
+                context_meta = {
+                    'total_tokens': 0,
+                    'retrieved_turns': len(retrieved_context),
+                    'recent_turns': 0,
+                    'budget_utilization': 0
+                }
+                prompt = self._build_prompt(
+                    messages=request.messages,
+                    recent_turns=self.memory.get_recent_turns(request.conversation_id, limit=3),
+                    retrieved_context=retrieved_context,
+                    user_query=user_query
+                )
 
             # Generate response
             response_text = await self._call_vllm(
@@ -135,16 +152,17 @@ class InfiniteMemoryEngine:
                 temperature=request.temperature
             )
 
-            # V2: Store in context manager (in-memory)
-            self.context_manager.add_turn(
-                conversation_id=request.conversation_id,
-                user_query=user_query,
-                assistant_response=response_text,
-                metadata={
-                    'user_id': request.user_id,
-                    'model': request.model
-                }
-            )
+            # V2: Store in context manager (if exists)
+            if hasattr(self, 'context_manager'):
+                self.context_manager.add_turn(
+                    conversation_id=request.conversation_id,
+                    user_query=user_query,
+                    assistant_response=response_text,
+                    metadata={
+                        'user_id': request.user_id,
+                        'model': request.model
+                    }
+                )
 
             # Update metrics
             self.generation_count += 1
@@ -152,17 +170,23 @@ class InfiniteMemoryEngine:
             self.total_tokens_generated += tokens_generated
             latency = (time.time() - start_time) * 1000
 
+            # Get conversation length
+            if hasattr(self, 'context_manager'):
+                conv_length = self.context_manager.get_recent_turns_count(request.conversation_id)
+            else:
+                conv_length = self.memory.get_conversation_length(request.conversation_id)
+
             return {
                 'response': response_text,
                 'conversation_id': request.conversation_id,
                 'metadata': {
                     'latency_ms': latency,
                     'tokens_generated': tokens_generated,
-                    'context_tokens': context_meta['total_tokens'],
-                    'context_retrieved': context_meta['retrieved_turns'],
-                    'recent_turns_used': context_meta['recent_turns'],
-                    'budget_utilization': context_meta['budget_utilization'],
-                    'conversation_turn': self.context_manager.get_recent_turns_count(request.conversation_id)
+                    'context_tokens': context_meta.get('total_tokens', 0),
+                    'context_retrieved': context_meta.get('retrieved_turns', 0),
+                    'recent_turns_used': context_meta.get('recent_turns', 0),
+                    'budget_utilization': context_meta.get('budget_utilization', 0),
+                    'conversation_turn': conv_length
                 },
                 'success': True
             }
@@ -229,8 +253,8 @@ class InfiniteMemoryEngine:
     def get_stats(self) -> Dict:
         """Get statistics"""
         memory_stats = self.memory.get_metrics()
-        context_stats = self.context_manager.get_stats()
-        return {
+        
+        stats = {
             'engine_stats': {
                 'total_generations': self.generation_count,
                 'total_tokens_generated': self.total_tokens_generated,
@@ -240,6 +264,12 @@ class InfiniteMemoryEngine:
                     if self.generation_count > 0 else 0
                 )
             },
-            'memory_stats': memory_stats,
-            'context_v2_stats': context_stats
+            'memory_stats': memory_stats
         }
+        
+        # Add V2 stats if context manager exists
+        if hasattr(self, 'context_manager'):
+            stats['context_v2_stats'] = self.context_manager.get_stats()
+        
+        return stats
+

@@ -181,10 +181,34 @@ class LoveableStyleBenchmark:
         
         print("Building app (turns 1-95)...")
         
-        # Store turns 1-95
-        for turn in conversation[:95]:
+        # Get actual conversation length and test queries
+        test_turns = [t for t in conversation if t.get('test_query')]
+        total_turns = len(conversation)
+        training_turns = total_turns - len(test_turns) if test_turns else total_turns
+        
+        print(f"Total turns: {total_turns}, Training: {training_turns}, Test: {len(test_turns)}")
+        
+        # Check if we have test queries
+        if len(test_turns) == 0:
+            print("❌ ERROR: No test queries found in conversation")
+            return {
+                'accuracy': 0,
+                'tokens_used': 0,
+                'total_tokens': 0,
+                'latency_ms': 0,
+                'queries_successful': 0,
+                'total_queries': 0,
+                'error': 'No test queries in conversation',
+                'details': []
+            }
+        
+        # Store training turns (all except test queries)
+        for turn in conversation:
+            if turn.get('test_query'):
+                continue  # Skip test queries for now
+                
             if turn.get('filler'):
-                continue  # Skip some filler to simulate real workflow
+                continue  # Skip filler to simulate real workflow
             
             self.memory.add_turn(
                 conversation_id=conv_id,
@@ -201,9 +225,6 @@ class LoveableStyleBenchmark:
         await asyncio.sleep(2)
         
         print(f"Stored {self.memory.get_conversation_length(conv_id)} turns")
-        
-        # Test retrieval on turns 96-100
-        test_turns = [t for t in conversation[95:] if t.get('test_query')]
         
         print(f"\nTesting {len(test_turns)} reference queries...\n")
         
@@ -243,7 +264,7 @@ class LoveableStyleBenchmark:
             
             total_tokens += context_tokens
             
-            accuracy = len(found_items) / len(test['requires'])
+            accuracy = len(found_items) / len(test['requires']) if test['requires'] else 0
             if accuracy >= 0.6:  # 60%+ is success
                 correct += 1
                 print(f"    ✅ SUCCESS: Found {len(found_items)}/{len(test['requires'])} ({accuracy:.0%})")
@@ -262,8 +283,8 @@ class LoveableStyleBenchmark:
             })
         
         overall_accuracy = correct / len(test_turns)
-        avg_tokens = total_tokens / len(test_turns)
-        avg_latency = total_latency / len(test_turns)
+        avg_tokens = total_tokens / len(test_turns) if test_turns else 0
+        avg_latency = total_latency / len(test_turns) if test_turns else 0
         
         print(f"\n  V2 Retrieval Summary:")
         print(f"    Overall Accuracy: {overall_accuracy:.1%} ({correct}/{len(test_turns)} queries)")
@@ -280,14 +301,32 @@ class LoveableStyleBenchmark:
             'details': results_detail
         }
 
+
     async def test_summary_approach(self, conversation: List[Dict]) -> Dict:
         """Test summarization approach"""
         
-        print("Building app (turns 1-95)...")
+        # Get test queries first
+        test_turns = [t for t in conversation if t.get('test_query')]
         
-        # Build full history (what summarization would store)
+        if len(test_turns) == 0:
+            print("  ❌ ERROR: No test queries found")
+            return {
+                'accuracy': 0,
+                'tokens_used': 0,
+                'total_tokens': 0,
+                'latency_ms': 0,
+                'queries_successful': 0,
+                'total_queries': 0,
+                'error': 'No test queries'
+            }
+        
+        print("Building app history for summarization...")
+        
+        # Build full history (excluding test queries)
         full_history = []
-        for turn in conversation[:95]:
+        for turn in conversation:
+            if turn.get('test_query'):
+                continue
             full_history.append(f"User: {turn['user']}")
             full_history.append(f"Assistant: {turn['assistant']}")
         
@@ -301,13 +340,13 @@ class LoveableStyleBenchmark:
         
         summary_prompt = f"""Summarize this e-commerce app development session. Preserve ALL important code snippets, function names, and component structures:
 
-{history_text[:8000]}
+    {history_text[:8000]}
 
-Provide detailed summary including:
-- Authentication components and functions
-- Cart management logic
-- Payment integration code
-- All key function names and variables"""
+    Provide detailed summary including:
+    - Authentication components and functions
+    - Cart management logic
+    - Payment integration code
+    - All key function names and variables"""
         
         summary_request = GenerationRequest(
             conversation_id="loveable_summary",
@@ -321,14 +360,31 @@ Provide detailed summary including:
         summary_latency = (time.time() - start_summary) * 1000
         
         if not summary_result.get('success'):
+            print("  ❌ Summary generation failed")
             return {
                 'accuracy': 0,
                 'tokens_used': 0,
+                'total_tokens': 0,
                 'latency_ms': 0,
+                'queries_successful': 0,
+                'total_queries': len(test_turns),
                 'error': 'Summary generation failed'
             }
         
         summary_text = summary_result.get('response', '')
+        
+        if not summary_text:
+            print("  ❌ Empty summary generated")
+            return {
+                'accuracy': 0,
+                'tokens_used': 0,
+                'total_tokens': 0,
+                'latency_ms': summary_latency,
+                'queries_successful': 0,
+                'total_queries': len(test_turns),
+                'error': 'Empty summary'
+            }
+        
         summary_tokens = count_tokens(summary_text)
         
         print(f"Summary generated: {len(summary_text)} chars, {summary_tokens} tokens")
