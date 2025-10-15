@@ -7,7 +7,8 @@ import asyncio
 from typing import List, Dict, Optional
 import time
 from dataclasses import dataclass
-
+from context_manager_v2 import ContextManagerV2
+from token_counter import count_tokens
 
 @dataclass
 class GenerationRequest:
@@ -50,20 +51,28 @@ class InfiniteMemoryEngine:
     """vLLM engine with infinite conversation memory (SYNC VERSION)"""
 
     def __init__(self,
-                 vllm_engine,
-                 memory_manager,
-                 max_context_tokens: int = 4096,
-                 context_retrieval_k: int = 3):
+                vllm_engine,
+                memory_manager,
+                max_context_tokens: int = 4096,
+                context_retrieval_k: int = 3):
         self.engine = vllm_engine
         self.memory = memory_manager
         self.max_context_tokens = max_context_tokens
         self.context_retrieval_k = context_retrieval_k
+        
+        # V2: Add context manager
+        self.context_manager = ContextManagerV2(
+            token_budget=2000,  # 2K tokens for context
+            recent_turns_limit=15
+        )
+        
         self.generation_count = 0
         self.total_tokens_generated = 0
         self.context_retrievals = 0
 
+
     async def generate(self, request: GenerationRequest) -> Dict:
-        """Generate response with automatic memory (SYNC operations)"""
+        """Generate response with V2 memory management"""
         start_time = time.time()
 
         try:
@@ -78,27 +87,44 @@ class InfiniteMemoryEngine:
             if not user_query:
                 user_query = "continue"
 
-            # Get recent turns (fast - from cache)
-            recent_turns = self.memory.get_recent_turns(
-                request.conversation_id,
-                limit=3
-            )
+            # V2: Offload older turns to vector DB (if needed)
+            turns_to_offload = self.context_manager.get_turns_for_offload(request.conversation_id)
+            if turns_to_offload:
+                for turn in turns_to_offload:
+                    self.memory.add_turn(
+                        conversation_id=request.conversation_id,
+                        text=turn['user'],
+                        metadata={
+                            'response': turn['assistant'],
+                            'timestamp': turn['timestamp']
+                        }
+                    )
+                # Prune from memory after successful offload
+                self.context_manager.prune_offloaded_turns(
+                    request.conversation_id, 
+                    len(turns_to_offload)
+                )
 
-            # Retrieve relevant context (SYNC - simple and reliable)
+            # V2: Retrieve relevant context from vector DB (with reranking)
             context_result = self.memory.retrieve_context(
                 conversation_id=request.conversation_id,
                 query=user_query,
-                top_k=self.context_retrieval_k
+                top_k=20  # Get 20 candidates for reranking
             )
 
             retrieved_context = context_result.get('results', [])
             self.context_retrievals += 1
 
-            # Build prompt with context
-            prompt = self._build_prompt(
+            # V2: Build optimized context with token budget
+            formatted_context, context_meta = self.context_manager.get_context_for_llm(
+                conversation_id=request.conversation_id,
+                retrieved_context=retrieved_context
+            )
+
+            # Build final prompt
+            prompt = self._build_prompt_v2(
                 messages=request.messages,
-                recent_turns=recent_turns,
-                retrieved_context=retrieved_context,
+                formatted_context=formatted_context,
                 user_query=user_query
             )
 
@@ -109,15 +135,14 @@ class InfiniteMemoryEngine:
                 temperature=request.temperature
             )
 
-            # Store in memory (SYNC - guaranteed to complete)
-            self.memory.add_turn(
+            # V2: Store in context manager (in-memory)
+            self.context_manager.add_turn(
                 conversation_id=request.conversation_id,
-                text=user_query,
+                user_query=user_query,
+                assistant_response=response_text,
                 metadata={
-                    'response': response_text,
                     'user_id': request.user_id,
-                    'model': request.model,
-                    'timestamp': time.time()
+                    'model': request.model
                 }
             )
 
@@ -133,9 +158,11 @@ class InfiniteMemoryEngine:
                 'metadata': {
                     'latency_ms': latency,
                     'tokens_generated': tokens_generated,
-                    'context_retrieved': len(retrieved_context),
-                    'recent_turns_used': len(recent_turns),
-                    'conversation_turn': self.memory.get_conversation_length(request.conversation_id)
+                    'context_tokens': context_meta['total_tokens'],
+                    'context_retrieved': context_meta['retrieved_turns'],
+                    'recent_turns_used': context_meta['recent_turns'],
+                    'budget_utilization': context_meta['budget_utilization'],
+                    'conversation_turn': self.context_manager.get_recent_turns_count(request.conversation_id)
                 },
                 'success': True
             }
@@ -148,6 +175,7 @@ class InfiniteMemoryEngine:
                 'error': str(e),
                 'conversation_id': request.conversation_id
             }
+
 
     async def _call_vllm(self, prompt: str, max_tokens: int, 
                         temperature: float) -> str:
@@ -173,12 +201,11 @@ class InfiniteMemoryEngine:
             return outputs[0].outputs[0].text.strip()
         return ""
 
-    def _build_prompt(self, 
-                     messages: List[Dict],
-                     recent_turns: List[str],
-                     retrieved_context: List[Dict],
-                     user_query: str) -> str:
-        """Build prompt with retrieved context"""
+    def _build_prompt_v2(self, 
+                        messages: List[Dict],
+                        formatted_context: str,
+                        user_query: str) -> str:
+        """Build prompt using V2 formatted context"""
         prompt_parts = []
 
         # Add system message if present
@@ -187,24 +214,9 @@ class InfiniteMemoryEngine:
             prompt_parts.append(f"System: {system_msg}")
             prompt_parts.append("")
 
-        # Add retrieved relevant context (if high similarity)
-        if retrieved_context:
-            high_quality = [ctx for ctx in retrieved_context if ctx.get('similarity', 0) > 0.5]
-            if high_quality:
-                prompt_parts.append("# Relevant context from earlier in conversation:")
-                for ctx in high_quality[:2]:  # Top 2 most relevant
-                    query = ctx['text']
-                    response = ctx['metadata'].get('response', '')
-                    if response:
-                        prompt_parts.append(f"Previously - User: {query[:100]}...")
-                        prompt_parts.append(f"Assistant: {response[:150]}...")
-                prompt_parts.append("")
-
-        # Add recent turns (last 3 exchanges)
-        if recent_turns:
-            prompt_parts.append("# Recent conversation:")
-            for turn in recent_turns[-3:]:
-                prompt_parts.append(turn)
+        # Add V2 formatted context (already optimized with budget)
+        if formatted_context:
+            prompt_parts.append(formatted_context)
             prompt_parts.append("")
 
         # Add current query
@@ -213,9 +225,11 @@ class InfiniteMemoryEngine:
 
         return "\n".join(prompt_parts)
 
+
     def get_stats(self) -> Dict:
         """Get statistics"""
         memory_stats = self.memory.get_metrics()
+        context_stats = self.context_manager.get_stats()
         return {
             'engine_stats': {
                 'total_generations': self.generation_count,
@@ -226,5 +240,6 @@ class InfiniteMemoryEngine:
                     if self.generation_count > 0 else 0
                 )
             },
-            'memory_stats': memory_stats
+            'memory_stats': memory_stats,
+            'context_v2_stats': context_stats
         }

@@ -7,15 +7,15 @@ FIXED: Thread-safe Qdrant operations
 from typing import List, Dict, Optional
 import os
 import threading
-
+from reranker import rerank
 
 class QdrantAdapter:
-    """Qdrant adapter - Fast, production-ready vector DB with thread safety"""
+    """Qdrant adapter - Fast, production-ready vector DB with Nomic-Embed + Reranking"""
 
     def __init__(self, 
                  persist_dir: str = "./data/qdrant_db",
                  collection_name: str = "conversations"):
-        """Initialize Qdrant client with thread-safe operations"""
+        """Initialize Qdrant client with Nomic-Embed and reranking support"""
         from qdrant_client import QdrantClient
         from qdrant_client.models import Distance, VectorParams, PointStruct
 
@@ -28,10 +28,15 @@ class QdrantAdapter:
         # Thread lock for concurrent access protection
         self._lock = threading.RLock()
 
-        # Initialize sentence transformer for embeddings
+        # V2: Initialize Nomic-Embed for embeddings (UPGRADED from all-MiniLM-L6-v2)
         from sentence_transformers import SentenceTransformer
-        self.encoder = SentenceTransformer('all-MiniLM-L6-v2')
-        self.vector_size = 384  # all-MiniLM-L6-v2 dimension
+        print("Loading Nomic-Embed-Text-v1.5 (768 dim)...")
+        self.encoder = SentenceTransformer('nomic-ai/nomic-embed-text-v1.5')
+        self.vector_size = 768  # Nomic-Embed dimension (upgraded from 384)
+        print("✅ Nomic-Embed loaded")
+
+        # V2: Initialize BGE reranker (lazy load on first query)
+        self._reranker = None
 
         # Create collection if doesn't exist
         try:
@@ -45,24 +50,31 @@ class QdrantAdapter:
                     distance=Distance.COSINE
                 )
             )
-            print(f"Qdrant collection '{collection_name}' created")
+            print(f"Qdrant collection '{collection_name}' created with Nomic-Embed (768 dim)")
 
         # Get collection info
         info = self.client.get_collection(collection_name)
         print(f"Qdrant initialized: {info.points_count} documents")
 
+    def _get_reranker(self):
+        """Lazy load BGE reranker (only when first query needs it)"""
+        if self._reranker is None:
+            from reranker import get_reranker
+            self._reranker = get_reranker()
+        return self._reranker
+
     def add(self, 
             conversation_id: str,
             text: str,
             metadata: Optional[Dict] = None) -> bool:
-        """Add conversation turn with embedding (thread-safe)"""
+        """Add conversation turn with Nomic-Embed embedding (thread-safe)"""
         try:
             if not text or not text.strip():
                 return False
 
             from qdrant_client.models import PointStruct
 
-            # Generate embedding
+            # Generate embedding with Nomic-Embed
             vector = self.encoder.encode(text).tolist()
 
             # Create unique ID
@@ -104,23 +116,32 @@ class QdrantAdapter:
     def query(self,
              conversation_id: str,
              query_text: str,
-             top_k: int = 3) -> List[Dict]:
-        """Query with similarity threshold (thread-safe)"""
+             top_k: int = 3,
+             use_reranking: bool = True) -> List[Dict]:
+        """
+        V2: Two-stage retrieval with Nomic-Embed + BGE Reranker (thread-safe)
+        
+        Stage 1: Retrieve 20 candidates with Nomic-Embed
+        Stage 2: Rerank to top-3 with BGE Reranker
+        """
         try:
             if not query_text or not query_text.strip():
                 return []
 
             from qdrant_client.models import Filter, FieldCondition, MatchValue
 
-            # Generate query embedding
+            # Generate query embedding with Nomic-Embed
             query_vector = self.encoder.encode(query_text).tolist()
+
+            # STAGE 1: Retrieve more candidates (20) for reranking
+            retrieve_k = 20 if use_reranking else top_k
 
             # Thread-safe search
             with self._lock:
                 results = self.client.search(
                     collection_name=self.collection_name,
                     query_vector=query_vector,
-                    limit=top_k,
+                    limit=retrieve_k,
                     query_filter=Filter(
                         must=[
                             FieldCondition(
@@ -141,6 +162,13 @@ class QdrantAdapter:
                         'metadata': hit.payload,
                         'similarity': hit.score
                     })
+
+            # STAGE 2: Rerank top candidates with BGE
+            if use_reranking and len(formatted) > top_k:
+                reranker = self._get_reranker()
+                formatted = reranker.rerank(query_text, formatted, top_k=top_k)
+            elif len(formatted) > top_k:
+                formatted = formatted[:top_k]
 
             return formatted
 

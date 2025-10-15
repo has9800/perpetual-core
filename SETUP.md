@@ -17,7 +17,7 @@ pip install fastapi
 pip install uvicorn[standard]
 pip install python-dotenv
 pip install chromadb
-pip install sentence-transformers
+pip install sentence-transformers==2.2.2 --upgrade
 pip install python-multipart
 pip install psutil
 pip install qdrant-client
