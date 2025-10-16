@@ -20,6 +20,7 @@ pip install chromadb
 pip install sentence-transformers==2.2.2 --upgrade
 pip install python-multipart
 pip install psutil
+pip install splade-model
 pip install qdrant-client
 pip install sentence-transformers
 pip install langchain langchain-openai openai

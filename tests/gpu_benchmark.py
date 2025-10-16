@@ -485,7 +485,9 @@ async def run_all_benchmarks():
     vector_db = create_vector_db(
         backend="qdrant",
         url="https://36781b69-d550-4187-8f16-cda24dae5705.eu-central-1-0.aws.cloud.qdrant.io",  # From Qdrant Cloud
-        api_key="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.2laXUcFViaujaraUyWhVt8kP45VdUAarzimMdtIF1BA"  # From Qdrant Cloud
+        api_key="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.2laXUcFViaujaraUyWhVt8kP45VdUAarzimMdtIF1BA",  # From Qdrant Cloud
+        collection_name="conversations",
+        llm_engine=vllm_engine  # ✅ Pass vLLM for HyDE
     )
     
     memory_manager = MemoryManager(vector_db=vector_db, cache_capacity=1000)
