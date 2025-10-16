@@ -155,56 +155,41 @@ class QdrantAdapter:
             top_k: int = 3,
             similarity_threshold: float = 0.6) -> List[Dict]:
         """
-        Hybrid search with smart RRF reranking
-        
-        Combines:
-        1. Dense semantic search (Nomic-Embed)
-        2. Sparse keyword search (BM25)
-        3. RRF fusion
+        Hybrid search: Query with dense vector, use prefetch for fusion
         """
         try:
             if not query_text or not query_text.strip():
                 return []
 
-            from qdrant_client.models import Filter, FieldCondition, MatchValue, Prefetch, Fusion
+            from qdrant_client.models import Filter, FieldCondition, MatchValue, Prefetch, QueryRequest
 
             # Generate query vectors
             dense_query = self.dense_encoder.encode(query_text).tolist()
             sparse_query = self._generate_sparse_vector(query_text)
 
-            # Hybrid search with RRF fusion
+            conv_filter = Filter(
+                must=[FieldCondition(
+                    key="conversation_id", 
+                    match=MatchValue(value=conversation_id)
+                )]
+            )
+
+            # Hybrid search with named vectors
             with self._lock:
                 results = self.client.query_points(
                     collection_name=self.collection_name,
+                    query=dense_query,  # Main query vector
+                    using="dense",  # ✅ SPECIFY WHICH VECTOR TO USE
+                    query_filter=conv_filter,
+                    limit=top_k,
                     prefetch=[
-                        # Dense semantic search
-                        Prefetch(
-                            query=dense_query,
-                            using="dense",
-                            limit=20,
-                            filter=Filter(
-                                must=[FieldCondition(
-                                    key="conversation_id", 
-                                    match=MatchValue(value=conversation_id)
-                                )]
-                            )
-                        ),
-                        # Sparse keyword search (BM25)
+                        # Also prefetch sparse results for fusion
                         Prefetch(
                             query=sparse_query,
                             using="sparse",
-                            limit=20,
-                            filter=Filter(
-                                must=[FieldCondition(
-                                    key="conversation_id", 
-                                    match=MatchValue(value=conversation_id)
-                                )]
-                            )
+                            limit=top_k * 2
                         )
-                    ],
-                    query=dense_query,  # Use dense query as main query
-                    limit=top_k,
-                    # RRF fusion happens in prefetch combination
+                    ]
                 )
 
             # Format results
@@ -236,7 +221,6 @@ class QdrantAdapter:
             import traceback
             traceback.print_exc()
             return []
-
 
     def get_by_conversation(self, conversation_id: str) -> List[Dict]:
         """Get all turns for a conversation"""
