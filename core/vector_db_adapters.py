@@ -234,15 +234,25 @@ class QdrantAdapter:
                 candidate['similarity'] = float(rerank_scores[i])
                 candidate['reranked'] = True
 
-            # Sort by rerank score and take top_k
+            # Sort by rerank score and take top_k and only positive scores.
             candidates.sort(key=lambda x: x['similarity'], reverse=True)
-            formatted = candidates[:top_k]
 
-            if formatted:
-                top_similarity = formatted[0]['similarity']
-                print(f"  [Qdrant] Reranked {len(candidates)} → top_k={top_k}, best sim: {top_similarity:.3f} ✅")
-            
-            return formatted
+            # Filter out low rerank scores (keep only positive or above threshold)
+            RERANK_THRESHOLD = 0.0  # Only keep positive scores
+            filtered = [c for c in candidates if c['similarity'] > RERANK_THRESHOLD][:top_k]
+
+            if not filtered:
+                print(f"  [Qdrant] Reranked {len(candidates)} candidates, none above threshold")
+                return []
+
+            if filtered:
+                top_similarity = filtered[0]['similarity']
+                if top_similarity > 0.5:
+                    print(f"  [Qdrant] Reranked {len(candidates)} → {len(filtered)} good, best: {top_similarity:.3f} ✅")
+                else:
+                    print(f"  [Qdrant] Reranked {len(candidates)} → {len(filtered)} weak, best: {top_similarity:.3f}")
+
+            return filtered
 
         except Exception as e:
             print(f"Qdrant query error: {e}")
