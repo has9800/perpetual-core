@@ -12,13 +12,13 @@ class QdrantAdapter:
     """Qdrant adapter with Hybrid Search (Dense + Sparse)"""
 
     def __init__(self, 
-                 persist_dir: str = "./data/qdrant_db",
-                 collection_name: str = "conversations",
-                 url: Optional[str] = None,
-                 api_key: Optional[str] = None):
+                persist_dir: str = "./data/qdrant_db",
+                collection_name: str = "conversations",
+                url: Optional[str] = None,
+                api_key: Optional[str] = None):
         """Initialize Qdrant with Hybrid Search support"""
         from qdrant_client import QdrantClient
-        from qdrant_client.models import Distance, VectorParams, SparseVectorParams, SparseIndexParams
+        from qdrant_client.models import Distance, VectorParams, SparseVectorParams, SparseIndexParams, PayloadSchemaType
 
         # Connect to Qdrant (Cloud or local)
         if url and api_key:
@@ -42,10 +42,6 @@ class QdrantAdapter:
         self.dense_size = 768
         print("✅ Nomic-Embed loaded")
 
-        # BM25 tokenizer for sparse vectors
-        from qdrant_client.models import TokenizerType
-        self.tokenizer = None  # Will use Qdrant's built-in BM25
-
         # Create collection with hybrid vectors
         try:
             self.client.get_collection(collection_name)
@@ -66,9 +62,18 @@ class QdrantAdapter:
                 }
             )
             print(f"Qdrant collection '{collection_name}' created with hybrid search")
+            
+            # CREATE INDEX FOR conversation_id (CRITICAL for Cloud filtering)
+            self.client.create_payload_index(
+                collection_name=collection_name,
+                field_name="conversation_id",
+                field_schema=PayloadSchemaType.KEYWORD
+            )
+            print(f"✅ Created index on 'conversation_id'")
 
         info = self.client.get_collection(collection_name)
         print(f"✅ Qdrant ready: {info.points_count} documents")
+
 
     def _generate_sparse_vector(self, text: str) -> Dict:
         """Generate BM25 sparse vector"""
