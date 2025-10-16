@@ -477,29 +477,33 @@ async def run_all_benchmarks():
     print("Proving: Infinite memory, constant performance, intelligent retrieval")
     print("="*80)
 
-    # Initialize
     print("\nInitializing system...")
-
-    # vector_db = create_vector_db(backend="qdrant")
-
-    vector_db = create_vector_db(
-        backend="qdrant",
-        url="https://36781b69-d550-4187-8f16-cda24dae5705.eu-central-1-0.aws.cloud.qdrant.io",  # From Qdrant Cloud
-        api_key="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.2laXUcFViaujaraUyWhVt8kP45VdUAarzimMdtIF1BA",  # From Qdrant Cloud
-        collection_name="conversations",
-        llm_engine=vllm_engine  # ✅ Pass vLLM for HyDE
-    )
     
-    memory_manager = MemoryManager(vector_db=vector_db, cache_capacity=1000)
-
+    # Create vLLM engine
     model_name = os.getenv("MODEL_NAME", "TheBloke/Mistral-7B-Instruct-v0.2-GPTQ")
     vllm_engine = create_vllm_engine(
         model_name=model_name,
         quantization="gptq",
-        gpu_memory_utilization=0.9,
+        gpu_memory_utilization=0.85,  # ✅ Lowered from 0.9
         max_model_len=4096
     )
-
+    print("✅ vLLM ready")
+    
+    # Create vector_db (needs vllm_engine)
+    vector_db = create_vector_db(
+        backend="qdrant",
+        url="https://36781b69-d550-4187-8f16-cda24dae5705.eu-central-1-0.aws.cloud.qdrant.io",
+        api_key="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.2laXUcFViaujaraUyWhVt8kP45VdUAarzimMdtIF1BA",
+        collection_name="conversations",
+        llm_engine=vllm_engine  # ✅ Pass vLLM for HyDE
+    )
+    print("✅ Vector DB ready")
+    
+    # Create memory_manager (needs vector_db)
+    memory_manager = MemoryManager(vector_db=vector_db, cache_capacity=1000)
+    print("✅ Memory Manager ready")
+    
+    # Create infinite_engine (needs vllm_engine and memory_manager)
     infinite_engine = InfiniteMemoryEngine(
         vllm_engine=vllm_engine,
         memory_manager=memory_manager,
@@ -507,7 +511,7 @@ async def run_all_benchmarks():
         context_retrieval_k=5,
         use_simple_memory=True
     )
-
+    print("✅ Infinite Engine ready")
     print("✅ System ready\n")
 
     # Run benchmarks
@@ -553,7 +557,7 @@ async def run_all_benchmarks():
     if 'semantic' in all_results:
         print(f"\n🎯 SEMANTIC UNDERSTANDING:")
         print(f"   Accuracy: {all_results['semantic']['accuracy_percent']:.1f}%")
-        print(f"   Finds relevant context with different wording")
+        print(f"   Adaptive retrieval: Qwen3 + SPLADE + HyDE")
 
     if 'code_retrieval' in all_results:
         print(f"\n💻 CODE RETRIEVAL:")
