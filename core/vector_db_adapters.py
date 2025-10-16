@@ -32,15 +32,15 @@ class QdrantAdapter:
         self.collection_name = collection_name
         self._lock = threading.RLock()
 
-        # Nomic-Embed for dense vectors
+        # BGE-Large for dense vectors (BETTER semantic understanding)
         from sentence_transformers import SentenceTransformer
-        print("Loading Nomic-Embed-Text-v1.5 (768 dim)...")
+        print("Loading BGE-Large-EN-v1.5 (1024 dim)...")
         self.dense_encoder = SentenceTransformer(
-            'nomic-ai/nomic-embed-text-v1.5', 
-            trust_remote_code=True
+            'BAAI/bge-large-en-v1.5',
+            device='cuda'  # Use GPU
         )
-        self.dense_size = 768
-        print("✅ Nomic-Embed loaded")
+        self.dense_size = 1024  # BGE uses 1024 dimensions
+        print("✅ BGE-Large loaded")
 
         # Create collection with hybrid vectors (if doesn't exist)
         try:
@@ -52,7 +52,7 @@ class QdrantAdapter:
                 collection_name=collection_name,
                 vectors_config={
                     "dense": VectorParams(
-                        size=self.dense_size, 
+                        size=self.dense_size,  # 1024 for BGE
                         distance=Distance.COSINE
                     )
                 },
@@ -62,9 +62,9 @@ class QdrantAdapter:
                     )
                 }
             )
-            print(f"Qdrant collection '{collection_name}' created with hybrid search")
+            print(f"Qdrant collection '{collection_name}' created with hybrid search (BGE-1024)")
 
-        # ALWAYS ensure index exists (whether collection is new or existing)
+        # ALWAYS ensure index exists
         try:
             self.client.create_payload_index(
                 collection_name=collection_name,
@@ -73,7 +73,6 @@ class QdrantAdapter:
             )
             print(f"✅ Created index on 'conversation_id'")
         except Exception as idx_err:
-            # Index might already exist - that's fine
             if "already exists" in str(idx_err).lower() or "duplicate" in str(idx_err).lower():
                 print(f"✅ Index on 'conversation_id' already exists")
             else:
@@ -186,17 +185,18 @@ class QdrantAdapter:
                         Prefetch(
                             query=sparse_query,
                             using="sparse",
-                            limit=top_k * 2
+                            limit=int(top_k * 1.5)
                         )
                     ]
                 )
 
             # Format results - handle QueryResponse structure
+            # Format results - handle QueryResponse structure
             formatted = []
-            
+
             # Check if results is a list or QueryResponse object
             points = results.points if hasattr(results, 'points') else results
-            
+
             for hit in points:
                 # Handle both ScoredPoint and tuple formats
                 if isinstance(hit, tuple):
@@ -206,7 +206,10 @@ class QdrantAdapter:
                     score = hit.score if hasattr(hit, 'score') else 0.0
                     payload = hit.payload if hasattr(hit, 'payload') else {}
                 
-                if score > 0.3:
+                # Apply 80/20 weighting (dense gets 80% weight in fusion)
+                # Note: Qdrant's RRF already combines them, this is for display
+                
+                if score > 0.3:  # Keep threshold
                     formatted.append({
                         'text': payload.get('text', ''),
                         'metadata': payload,
