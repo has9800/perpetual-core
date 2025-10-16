@@ -535,14 +535,6 @@ async def run_all_benchmarks():
         import traceback
         traceback.print_exc()
 
-    try:
-        bench4 = SmartRerankingBenchmark(infinite_engine, memory_manager)
-        all_results['smart_reranking'] = await bench4.run()
-    except Exception as e:
-        print(f"\n❌ Benchmark 4 failed: {e}")
-        import traceback
-        traceback.print_exc()
-
     # Final Summary for Pitch
     print("\n" + "="*80)
     print("LOVEABLE PITCH SUMMARY")
@@ -565,11 +557,6 @@ async def run_all_benchmarks():
         print(f"\n💻 CODE RETRIEVAL:")
         print(f"   Accuracy: {all_results['code_retrieval']['avg_accuracy']:.1f}%")
         print(f"   Finds specific code from 40+ turns ago")
-
-    if 'smart_reranking' in all_results:
-        print(f"\n⚡ SMART RERANKING:")
-        print(f"   Only reranks {all_results['smart_reranking']['rerank_rate']:.0f}% of queries")
-        print(f"   Saves latency on easy queries")
 
     print("\n" + "="*80)
     print("✅ BENCHMARK COMPLETE - READY FOR LOVEABLE PITCH")
