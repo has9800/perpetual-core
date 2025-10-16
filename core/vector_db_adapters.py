@@ -16,9 +16,10 @@ class QdrantAdapter:
                 collection_name: str = "conversations",
                 url: Optional[str] = None,
                 api_key: Optional[str] = None):
-        """Initialize Qdrant with Hybrid Search support"""
+        """Initialize Qdrant with Hybrid Search + Cross-Encoder Reranking"""
         from qdrant_client import QdrantClient
         from qdrant_client.models import Distance, VectorParams, SparseVectorParams, SparseIndexParams, PayloadSchemaType
+        from sentence_transformers import SentenceTransformer, CrossEncoder
 
         # Connect to Qdrant (Cloud or local)
         if url and api_key:
@@ -30,26 +31,24 @@ class QdrantAdapter:
             print(f"Connected to local Qdrant: {persist_dir}")
 
         self.collection_name = collection_name
-
-        # Force delete collection (for testing with dimension changes)
-        try:
-            self.client.delete_collection(collection_name=collection_name)  # ✅ self.client not client
-            print(f"🗑️  Deleted old collection '{collection_name}'")
-        except Exception as e:
-            print(f"No collection to delete (this is fine): {e}")
-
         self._lock = threading.RLock()
 
-
-        # BGE-Large for dense vectors (BETTER semantic understanding)
-        from sentence_transformers import SentenceTransformer
+        # BGE-Large for dense vectors (better semantic understanding)
         print("Loading BGE-Large-EN-v1.5 (1024 dim)...")
         self.dense_encoder = SentenceTransformer(
             'BAAI/bge-large-en-v1.5',
-            device='cuda'  # Use GPU
+            device='cuda'
         )
-        self.dense_size = 1024  # BGE uses 1024 dimensions
+        self.dense_size = 1024
         print("✅ BGE-Large loaded")
+
+        # Cross-encoder for reranking (high precision)
+        print("Loading cross-encoder for reranking...")
+        self.reranker = CrossEncoder(
+            'cross-encoder/ms-marco-MiniLM-L-6-v2',
+            device='cuda'
+        )
+        print("✅ Cross-encoder loaded")
 
         # Create collection with hybrid vectors (if doesn't exist)
         try:
@@ -61,7 +60,7 @@ class QdrantAdapter:
                 collection_name=collection_name,
                 vectors_config={
                     "dense": VectorParams(
-                        size=self.dense_size,  # 1024 for BGE
+                        size=self.dense_size,
                         distance=Distance.COSINE
                     )
                 },
@@ -89,6 +88,7 @@ class QdrantAdapter:
 
         info = self.client.get_collection(collection_name)
         print(f"✅ Qdrant ready: {info.points_count} documents")
+
 
     def _generate_sparse_vector(self, text: str) -> Dict:
         """Generate BM25 sparse vector"""
@@ -161,9 +161,12 @@ class QdrantAdapter:
             conversation_id: str,
             query_text: str,
             top_k: int = 3,
-            similarity_threshold: float = 0.6) -> List[Dict]:
+            similarity_threshold: float = 0.3) -> List[Dict]:
         """
-        Hybrid search: Query with dense vector, use prefetch for fusion
+        Hybrid search with cross-encoder reranking:
+        1. Vector search @ 0.3 threshold (high recall)
+        2. Cross-encoder rerank (high precision)
+        3. Return top_k results
         """
         try:
             if not query_text or not query_text.strip():
@@ -182,32 +185,28 @@ class QdrantAdapter:
                 )]
             )
 
-            # Hybrid search with named vectors
+            # Stage 1: Hybrid search with LOW threshold (high recall)
             with self._lock:
                 results = self.client.query_points(
                     collection_name=self.collection_name,
                     query=dense_query,
                     using="dense",
                     query_filter=conv_filter,
-                    limit=top_k,
+                    limit=top_k * 5,  # Fetch 5x more for reranking
                     prefetch=[
                         Prefetch(
                             query=sparse_query,
                             using="sparse",
-                            limit=int(top_k * 1.5)
+                            limit=top_k * 6
                         )
                     ]
                 )
 
-            # Format results - handle QueryResponse structure
-            # Format results - handle QueryResponse structure
-            formatted = []
-
-            # Check if results is a list or QueryResponse object
+            # Collect candidates with 0.3 threshold
+            candidates = []
             points = results.points if hasattr(results, 'points') else results
 
             for hit in points:
-                # Handle both ScoredPoint and tuple formats
                 if isinstance(hit, tuple):
                     point, score = hit
                     payload = point.payload if hasattr(point, 'payload') else {}
@@ -215,28 +214,34 @@ class QdrantAdapter:
                     score = hit.score if hasattr(hit, 'score') else 0.0
                     payload = hit.payload if hasattr(hit, 'payload') else {}
                 
-                # Apply 80/20 weighting (dense gets 80% weight in fusion)
-                # Note: Qdrant's RRF already combines them, this is for display
-                
-                if score > 0.3:  # Keep threshold
-                    formatted.append({
+                if score > 0.3:  # Low threshold - cast wide net
+                    candidates.append({
                         'text': payload.get('text', ''),
                         'metadata': payload,
-                        'similarity': score,
-                        'hybrid_search': True
+                        'initial_similarity': score
                     })
 
-            if not formatted:
+            if not candidates:
                 print(f"  [Qdrant] No results found")
                 return []
 
-            top_similarity = formatted[0]['similarity']
+            # Stage 2: Rerank with cross-encoder (high precision)
+            pairs = [[query_text, c['text']] for c in candidates]
+            rerank_scores = self.reranker.predict(pairs)
 
-            if top_similarity < similarity_threshold:
-                print(f"  [Qdrant] Hybrid search, low sim ({top_similarity:.3f})")
-            else:
-                print(f"  [Qdrant] Hybrid search, high sim ({top_similarity:.3f}) ✅")
+            # Update candidates with rerank scores
+            for i, candidate in enumerate(candidates):
+                candidate['similarity'] = float(rerank_scores[i])
+                candidate['reranked'] = True
 
+            # Sort by rerank score and take top_k
+            candidates.sort(key=lambda x: x['similarity'], reverse=True)
+            formatted = candidates[:top_k]
+
+            if formatted:
+                top_similarity = formatted[0]['similarity']
+                print(f"  [Qdrant] Reranked {len(candidates)} → top_k={top_k}, best sim: {top_similarity:.3f} ✅")
+            
             return formatted
 
         except Exception as e:
@@ -244,6 +249,7 @@ class QdrantAdapter:
             import traceback
             traceback.print_exc()
             return []
+
 
     def get_by_conversation(self, conversation_id: str) -> List[Dict]:
         """Get all turns for a conversation"""
