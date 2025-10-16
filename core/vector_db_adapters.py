@@ -239,7 +239,7 @@ class QdrantAdapter:
             candidates.sort(key=lambda x: x['similarity'], reverse=True)
 
             # Filter out low rerank scores (keep only positive or above threshold)
-            RERANK_THRESHOLD = 0.0  # Only keep positive scores
+            RERANK_THRESHOLD = 0.0  # Only scores above this threshold (positive)
             filtered = [c for c in candidates if c['similarity'] > RERANK_THRESHOLD][:top_k]
 
             if not filtered:
