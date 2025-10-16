@@ -155,7 +155,7 @@ def create_todo():
         
         # Retrieve relevant context
         start = time.time()
-        context = self.memory.retrieve_context(conv_id, user_query, top_k=3)
+        context = await self.memory.retrieve_context(conv_id, user_query, top_k=3)
         retrieval_time = time.time() - start
         
         # Build context

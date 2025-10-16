@@ -233,7 +233,7 @@ class SemanticRetrievalBenchmark:
             print(f"\n  Test {i+1}/{len(test_pairs)}: {pair['topic']}")
             print(f"    Query: '{pair['query'][:60]}...'")
 
-            context = self.memory.retrieve_context(conv_id, pair['query'], top_k=3)
+            context = await self.memory.retrieve_context(conv_id, pair['query'], top_k=3)
 
             if context.get('success') and context.get('results'):
                 results = context['results']
@@ -419,7 +419,7 @@ def verify_token():
             print(f"\n  Query {i+1}: '{test['query']}'")
             
             start = time.time()
-            context = self.memory.retrieve_context(
+            context = await self.memory.retrieve_context(
                 conversation_id=conv_id,
                 query=test['query'],
                 top_k=5

@@ -119,7 +119,7 @@ class MemoryEfficiencyBenchmark:
             if result.get('success'):
                 # Estimate prompt size (recent + retrieved context)
                 recent = self.memory.get_recent_turns(conv_id, limit=3)
-                context = self.memory.retrieve_context(conv_id, f"Turn {i+1}", top_k=3)
+                context = await self.memory.retrieve_context(conv_id, f"Turn {i+1}", top_k=3)
 
                 # Count tokens (rough estimate: ~4 chars per token)
                 prompt_size = sum(len(t) for t in recent) // 4
@@ -265,7 +265,7 @@ class RetrievalAccuracyBenchmark:
             print(f"    Query:  '{pair['query'][:60]}...'")
 
             # Retrieve using different wording
-            context = self.memory.retrieve_context(conv_id, pair['query'], top_k=5)
+            context = await self.memory.retrieve_context(conv_id, pair['query'], top_k=5)
 
             if context.get('success') and context.get('results'):
                 results = context['results']
@@ -533,7 +533,7 @@ class ComparativeBenchmark:
         start_time = time.time()
         
         # Retrieve context
-        context = self.memory.retrieve_context(
+        context = await self.memory.retrieve_context(
             conversation_id=conv_id,
             query=turn_50["user"],
             top_k=3

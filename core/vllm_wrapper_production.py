@@ -90,7 +90,7 @@ class InfiniteMemoryEngine:
                 user_query = "continue"
 
             # Retrieve from long-term memory (Qdrant with smart reranking)
-            context_result = self.memory.retrieve_context(
+            context_result = await self.memory.retrieve_context(
                 conversation_id=request.conversation_id,
                 query=user_query,
                 top_k=self.context_retrieval_k

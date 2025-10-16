@@ -98,7 +98,7 @@ class MemoryManager:
             self.stats['errors']['add_turn'] = self.stats['errors'].get('add_turn', 0) + 1
             return False
 
-    def retrieve_context(self,
+    async def retrieve_context(self,
                         conversation_id: str,
                         query: str,
                         top_k: int = 3) -> Dict:
@@ -118,7 +118,7 @@ class MemoryManager:
             self.stats['vector_db_searches'] += 1
 
             # Query vector DB for similar past exchanges
-            results = self.vector_db.query(
+            results = await self.vector_db.query(
                 conversation_id=conversation_id,
                 query_text=query,
                 top_k=top_k

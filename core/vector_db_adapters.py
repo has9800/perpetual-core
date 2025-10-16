@@ -3,10 +3,10 @@ Vector database adapters for conversation memory
 HYBRID SEARCH: Nomic-Embed (dense) + BM25 (sparse) + Smart RRF Reranking
 """
 
-from typing import List, Dict, Optional
+import time
 import os
 import threading
-
+from typing import List, Dict, Optional
 
 class QdrantAdapter:
     """Qdrant adapter with Hybrid Search (Dense + Sparse)"""
