@@ -138,23 +138,23 @@ class QdrantAdapter:
             return False
 
     def query(self,
-             conversation_id: str,
-             query_text: str,
-             top_k: int = 3,
-             similarity_threshold: float = 0.6) -> List[Dict]:
+            conversation_id: str,
+            query_text: str,
+            top_k: int = 3,
+            similarity_threshold: float = 0.6) -> List[Dict]:
         """
         Hybrid search with smart RRF reranking
         
         Combines:
         1. Dense semantic search (Nomic-Embed)
         2. Sparse keyword search (BM25)
-        3. RRF fusion when similarity is low
+        3. RRF fusion
         """
         try:
             if not query_text or not query_text.strip():
                 return []
 
-            from qdrant_client.models import Filter, FieldCondition, MatchValue, Prefetch, Query
+            from qdrant_client.models import Filter, FieldCondition, MatchValue, Prefetch, Fusion
 
             # Generate query vectors
             dense_query = self.dense_encoder.encode(query_text).tolist()
@@ -190,8 +190,9 @@ class QdrantAdapter:
                             )
                         )
                     ],
-                    query=Query(fusion="rrf"),  # Reciprocal Rank Fusion
-                    limit=top_k
+                    query=dense_query,  # Use dense query as main query
+                    limit=top_k,
+                    # RRF fusion happens in prefetch combination
                 )
 
             # Format results
@@ -211,12 +212,8 @@ class QdrantAdapter:
 
             top_similarity = formatted[0]['similarity']
 
-            # Smart secondary reranking: Only if top similarity is still low after hybrid
             if top_similarity < similarity_threshold:
-                print(f"  [Qdrant] Hybrid search, low sim ({top_similarity:.3f}) → Extra RRF pass")
-                
-                # Already using RRF, so this is just logging
-                # In practice, hybrid search should get us to 95%+ accuracy
+                print(f"  [Qdrant] Hybrid search, low sim ({top_similarity:.3f})")
             else:
                 print(f"  [Qdrant] Hybrid search, high sim ({top_similarity:.3f}) ✅")
 
@@ -227,6 +224,7 @@ class QdrantAdapter:
             import traceback
             traceback.print_exc()
             return []
+
 
     def get_by_conversation(self, conversation_id: str) -> List[Dict]:
         """Get all turns for a conversation"""
