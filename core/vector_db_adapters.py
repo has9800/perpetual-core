@@ -36,8 +36,9 @@ class QdrantAdapter:
         # BGE-Large for dense vectors (better semantic understanding)
         print("Loading BGE-Large-EN-v1.5 (1024 dim)...")
         self.dense_encoder = SentenceTransformer(
-            'BAAI/bge-large-en-v1.5',
-            device='cuda'
+            'dunzhang/stella_en_1.5B_v5',
+            device='cuda',
+            trust_remote_code=True
         )
         self.dense_size = 1024
         print("✅ BGE-Large loaded")

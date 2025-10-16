@@ -25,4 +25,11 @@ pip install sentence-transformers
 pip install langchain langchain-openai openai
 
 python3 perpetual-core/tests/gpu_benchmark.py
+
+# optional to kill processes
+pkill -9 python
+pkill -9 python3
+
+# Wait for cleanup
+sleep 2
 ```
