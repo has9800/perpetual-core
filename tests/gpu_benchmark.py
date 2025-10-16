@@ -17,8 +17,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'core'))
 from vector_db_adapters import create_vector_db
 from memory_manager import MemoryManager
 from vllm_wrapper_production import InfiniteMemoryEngine, create_vllm_engine, GenerationRequest
-from context_manager_simple import SimpleContextManager
-
+from context_manager import SimpleContextManager
 
 class InfiniteMemoryBenchmark:
     """
@@ -253,7 +252,7 @@ class SemanticRetrievalBenchmark:
                             reranked_count += 1
                         
                         print(f"    ✅ FOUND (similarity: {sim:.3f})")
-                        if sim >= 0.4:
+                        if sim >= 0.5:
                             correct += 1
                         break
                 
@@ -518,7 +517,7 @@ class SmartRerankingBenchmark:
             
             if context.get('results'):
                 top_sim = context['results'][0].get('similarity', 0)
-                was_reranked = context['results'][0].get('reranked', False)
+                was_reranked = context['results'][0].get('hybrid_search', False)
                 
                 print(f"    Top similarity: {top_sim:.3f}")
                 print(f"    Reranked: {was_reranked}")

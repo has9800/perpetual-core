@@ -62,7 +62,7 @@ class InfiniteMemoryEngine:
         
         # Simple context manager
         if use_simple_memory:
-            from context_manager_simple import SimpleContextManager
+            from context_manager import SimpleContextManager
             self.context_manager = SimpleContextManager(short_term_limit=15)
             print("✅ Simple Memory enabled: 15-turn sliding window + Qdrant")
         else:
