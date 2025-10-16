@@ -42,11 +42,12 @@ class QdrantAdapter:
         self.dense_size = 768
         print("✅ Nomic-Embed loaded")
 
-        # Create collection with hybrid vectors
+        # Create collection with hybrid vectors (if doesn't exist)
         try:
             self.client.get_collection(collection_name)
             print(f"Qdrant collection '{collection_name}' exists")
         except:
+            # Collection doesn't exist - create it
             self.client.create_collection(
                 collection_name=collection_name,
                 vectors_config={
@@ -62,18 +63,24 @@ class QdrantAdapter:
                 }
             )
             print(f"Qdrant collection '{collection_name}' created with hybrid search")
-            
-            # CREATE INDEX FOR conversation_id (CRITICAL for Cloud filtering)
+
+        # ALWAYS ensure index exists (whether collection is new or existing)
+        try:
             self.client.create_payload_index(
                 collection_name=collection_name,
                 field_name="conversation_id",
                 field_schema=PayloadSchemaType.KEYWORD
             )
             print(f"✅ Created index on 'conversation_id'")
+        except Exception as idx_err:
+            # Index might already exist - that's fine
+            if "already exists" in str(idx_err).lower() or "duplicate" in str(idx_err).lower():
+                print(f"✅ Index on 'conversation_id' already exists")
+            else:
+                print(f"Index warning: {idx_err}")
 
         info = self.client.get_collection(collection_name)
         print(f"✅ Qdrant ready: {info.points_count} documents")
-
 
     def _generate_sparse_vector(self, text: str) -> Dict:
         """Generate BM25 sparse vector"""
