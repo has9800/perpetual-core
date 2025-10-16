@@ -562,7 +562,14 @@ async def run_all_benchmarks():
     # Initialize
     print("\nInitializing system...")
 
-    vector_db = create_vector_db(backend="qdrant")
+    # vector_db = create_vector_db(backend="qdrant")
+
+    vector_db = create_vector_db(
+        backend="qdrant",
+        url="https://886eb61f-20e6-493e-b467-fbbcad529efd.us-west-2-0.aws.cloud.qdrant.io",  # From Qdrant Cloud
+        api_key="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.R4UyNOac6Gvf1yDferYocoEivA8cohdd5zf5aSgmvoE"  # From Qdrant Cloud
+    )
+    
     memory_manager = MemoryManager(vector_db=vector_db, cache_capacity=1000)
 
     model_name = os.getenv("MODEL_NAME", "TheBloke/Mistral-7B-Instruct-v0.2-GPTQ")
