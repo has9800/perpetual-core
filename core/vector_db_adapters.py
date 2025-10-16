@@ -161,7 +161,7 @@ class QdrantAdapter:
             if not query_text or not query_text.strip():
                 return []
 
-            from qdrant_client.models import Filter, FieldCondition, MatchValue, Prefetch, QueryRequest
+            from qdrant_client.models import Filter, FieldCondition, MatchValue, Prefetch
 
             # Generate query vectors
             dense_query = self.dense_encoder.encode(query_text).tolist()
@@ -178,12 +178,11 @@ class QdrantAdapter:
             with self._lock:
                 results = self.client.query_points(
                     collection_name=self.collection_name,
-                    query=dense_query,  # Main query vector
-                    using="dense",  # ✅ SPECIFY WHICH VECTOR TO USE
+                    query=dense_query,
+                    using="dense",
                     query_filter=conv_filter,
                     limit=top_k,
                     prefetch=[
-                        # Also prefetch sparse results for fusion
                         Prefetch(
                             query=sparse_query,
                             using="sparse",
@@ -192,14 +191,26 @@ class QdrantAdapter:
                     ]
                 )
 
-            # Format results
+            # Format results - handle QueryResponse structure
             formatted = []
-            for hit in results:
-                if hit.score > 0.3:
+            
+            # Check if results is a list or QueryResponse object
+            points = results.points if hasattr(results, 'points') else results
+            
+            for hit in points:
+                # Handle both ScoredPoint and tuple formats
+                if isinstance(hit, tuple):
+                    point, score = hit
+                    payload = point.payload if hasattr(point, 'payload') else {}
+                else:
+                    score = hit.score if hasattr(hit, 'score') else 0.0
+                    payload = hit.payload if hasattr(hit, 'payload') else {}
+                
+                if score > 0.3:
                     formatted.append({
-                        'text': hit.payload.get('text', ''),
-                        'metadata': hit.payload,
-                        'similarity': hit.score,
+                        'text': payload.get('text', ''),
+                        'metadata': payload,
+                        'similarity': score,
                         'hybrid_search': True
                     })
 
