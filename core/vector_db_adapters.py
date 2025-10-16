@@ -30,7 +30,16 @@ class QdrantAdapter:
             print(f"Connected to local Qdrant: {persist_dir}")
 
         self.collection_name = collection_name
+
+        # Force delete collection (for testing with dimension changes)
+        try:
+            self.client.delete_collection(collection_name=collection_name)  # ✅ self.client not client
+            print(f"🗑️  Deleted old collection '{collection_name}'")
+        except Exception as e:
+            print(f"No collection to delete (this is fine): {e}")
+
         self._lock = threading.RLock()
+
 
         # BGE-Large for dense vectors (BETTER semantic understanding)
         from sentence_transformers import SentenceTransformer
