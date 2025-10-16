@@ -85,7 +85,7 @@ class SimpleContextManager:
         # Add retrieved long-term context (only if high similarity)
         retrieved_count = 0
         if retrieved_long_term:
-            high_quality = [ctx for ctx in retrieved_long_term if ctx.get('similarity', 0) > 0.5]
+            high_quality = [ctx for ctx in retrieved_long_term if ctx.get('similarity', 0) > 0.4]
             if high_quality:
                 context_parts.append("# Earlier context:")
                 for ctx in high_quality[:3]:  # Top 3 most relevant
