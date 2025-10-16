@@ -484,8 +484,8 @@ async def run_all_benchmarks():
 
     vector_db = create_vector_db(
         backend="qdrant",
-        url="https://e72edd91-d87f-4c2a-8d0d-2b9339b9fe75.eu-west-2-0.aws.cloud.qdrant.io",  # From Qdrant Cloud
-        api_key="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.jGkTHK7ycNRNt_8-mFhc2Pt4d7exUelheQx5moGwBnE"  # From Qdrant Cloud
+        url="https://36781b69-d550-4187-8f16-cda24dae5705.eu-central-1-0.aws.cloud.qdrant.io",  # From Qdrant Cloud
+        api_key="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.2laXUcFViaujaraUyWhVt8kP45VdUAarzimMdtIF1BA"  # From Qdrant Cloud
     )
     
     memory_manager = MemoryManager(vector_db=vector_db, cache_capacity=1000)
