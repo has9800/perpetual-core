@@ -90,23 +90,37 @@ class ClusteringBenchmark:
         # Initialize clusterers
         self.kmeans_clusterer = KMeansClusterer()
 
-        # Semantic clustering (GPT-4o or local vLLM)
+        # Semantic clustering (OpenAI or local vLLM)
         if not skip_gpt4o:
-            try:
-                # Try local vLLM first (FREE!)
-                self.semantic_clusterer = SemanticClusterer(vllm_engine=self.llm)
-                self.has_semantic = True
-                self.semantic_method = "Local Mistral"
-                print(f"{Colors.GREEN}✓ Using local vLLM for semantic clustering (FREE!){Colors.END}")
-            except Exception as e:
-                # Fall back to OpenAI if available
+            # Prefer OpenAI if API key provided
+            if openai_api_key or os.getenv("OPENAI_API_KEY"):
                 try:
                     self.semantic_clusterer = SemanticClusterer(api_key=openai_api_key, model=openai_model)
                     self.has_semantic = True
                     self.semantic_method = openai_model
                     print(f"{Colors.GREEN}✓ Using {openai_model} for semantic clustering{Colors.END}")
-                except ValueError as e2:
-                    print(f"{Colors.YELLOW}⚠️  Semantic clustering disabled: {e2}{Colors.END}")
+                except ValueError as e:
+                    print(f"{Colors.YELLOW}⚠️  OpenAI clustering failed: {e}{Colors.END}")
+                    print(f"{Colors.YELLOW}   Falling back to local vLLM...{Colors.END}")
+                    try:
+                        self.semantic_clusterer = SemanticClusterer(vllm_engine=self.llm)
+                        self.has_semantic = True
+                        self.semantic_method = "Local Mistral"
+                        print(f"{Colors.GREEN}✓ Using local vLLM for semantic clustering (FREE!){Colors.END}")
+                    except Exception as e2:
+                        print(f"{Colors.YELLOW}⚠️  Semantic clustering disabled: {e2}{Colors.END}")
+                        self.semantic_clusterer = None
+                        self.has_semantic = False
+                        self.semantic_method = None
+            else:
+                # No API key, try local vLLM
+                try:
+                    self.semantic_clusterer = SemanticClusterer(vllm_engine=self.llm)
+                    self.has_semantic = True
+                    self.semantic_method = "Local Mistral"
+                    print(f"{Colors.GREEN}✓ Using local vLLM for semantic clustering (FREE!){Colors.END}")
+                except Exception as e:
+                    print(f"{Colors.YELLOW}⚠️  Semantic clustering disabled: {e}{Colors.END}")
                     print(f"{Colors.YELLOW}   Will run FREE comparison: No Clustering vs K-means{Colors.END}")
                     self.semantic_clusterer = None
                     self.has_semantic = False
