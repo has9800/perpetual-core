@@ -68,15 +68,23 @@ class ClusteringBenchmark:
 
         # Initialize Qdrant
         import os
-        qdrant_url = qdrant_url or os.getenv("QDRANT_URL") or "http://localhost:6333"
+        qdrant_url = qdrant_url or os.getenv("QDRANT_URL") or os.getenv("QDRANT_CLOUD_URL")
         qdrant_api_key = qdrant_api_key or os.getenv("QDRANT_API_KEY")
 
-        print(f"Connecting to Qdrant at: {qdrant_url}")
-        self.vector_db = QdrantAdapter(
-            url=qdrant_url,
-            api_key=qdrant_api_key,
-            collection_name="clustering_benchmark"
-        )
+        if qdrant_url:
+            print(f"Connecting to Qdrant at: {qdrant_url}")
+            self.vector_db = QdrantAdapter(
+                url=qdrant_url,
+                api_key=qdrant_api_key,
+                collection_name="clustering_benchmark"
+            )
+        else:
+            # Use in-memory Qdrant (no server needed)
+            print(f"Using in-memory Qdrant (no server required)")
+            self.vector_db = QdrantAdapter(
+                persist_dir=":memory:",
+                collection_name="clustering_benchmark"
+            )
 
         # Initialize clusterers
         self.kmeans_clusterer = KMeansClusterer()
