@@ -40,10 +40,16 @@ class QdrantAdapter:
         """Initialize Qdrant with adaptive retrieval"""
         
         # Connect to Qdrant
-        if url and api_key:
-            self.client = QdrantClient(url=url, api_key=api_key)
-            print(f"Connected to Qdrant Cloud: {url}")
+        if url:
+            # Remote Qdrant (cloud or self-hosted)
+            if api_key:
+                self.client = QdrantClient(url=url, api_key=api_key)
+                print(f"Connected to Qdrant Cloud: {url}")
+            else:
+                self.client = QdrantClient(url=url)
+                print(f"Connected to Qdrant (no auth): {url}")
         else:
+            # Local Qdrant
             os.makedirs(persist_dir, exist_ok=True)
             self.client = QdrantClient(path=persist_dir)
             print(f"Connected to local Qdrant: {persist_dir}")
@@ -58,6 +64,7 @@ class QdrantAdapter:
             'Qwen/Qwen3-Embedding-0.6B',
             device='cuda'
         )
+        self.model = self.dense_encoder  # Alias for compatibility
         self.dense_size = 768
         print("✅ Qwen3 loaded")
         

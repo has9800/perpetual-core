@@ -60,15 +60,16 @@ async def chat_completions(
         # Step 1: Retrieve relevant memories (if enabled)
         retrieved_context = []
         retrieval_latency = 0
-        
-        if chat_request.use_memory:
+        memory_settings = chat_request.get_memory_settings()
+
+        if chat_request.use_memory and memory_settings['semantic_top_k'] > 0:
             retrieval_start = time.time()
 
-            # Query memory
+            # Query memory with configurable top_k
             memory_results = await memory_manager.retrieve_context(
                 conversation_id=conversation_id,
                 query=user_message,
-                top_k=chat_request.memory_top_k
+                top_k=memory_settings['semantic_top_k']
             )
 
             if memory_results['success']:
@@ -237,15 +238,16 @@ async def chat_completions_stream(
             # Step 1: Retrieve relevant memories (if enabled)
             retrieved_context = []
             retrieval_latency = 0
+            memory_settings = chat_request.get_memory_settings()
 
-            if chat_request.use_memory:
+            if chat_request.use_memory and memory_settings['semantic_top_k'] > 0:
                 retrieval_start = time.time()
 
-                # Query memory
+                # Query memory with configurable top_k
                 memory_results = await memory_manager.retrieve_context(
                     conversation_id=conversation_id,
                     query=user_message,
-                    top_k=chat_request.memory_top_k
+                    top_k=memory_settings['semantic_top_k']
                 )
 
                 if memory_results['success']:
