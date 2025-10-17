@@ -22,6 +22,9 @@ huggingface-hub>=0.23.0
 # Vector Database
 qdrant-client==1.7.0
 
+# Redis (for token tracking and caching)
+redis>=5.0.0
+
 # Authentication & Database
 supabase==2.3.0
 httpx==0.25.2

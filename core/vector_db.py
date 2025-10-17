@@ -174,6 +174,64 @@ class QdrantAdapter:
             traceback.print_exc()
             return False
     
+    async def query_with_context_window(
+        self,
+        conversation_id: str,
+        query_text: str,
+        top_k: int = 3,
+        context_window: int = 2,
+        min_similarity: float = 0.65
+    ) -> List[Dict]:
+        """
+        ENHANCED retrieval with context window and re-ranking
+
+        Args:
+            conversation_id: Conversation to search
+            query_text: Query to search for
+            top_k: Number of results to return
+            context_window: Number of turns before/after each match (±window)
+            min_similarity: Minimum similarity threshold for filtering
+
+        Returns:
+            List of dicts with 'text', 'similarity', 'metadata', 'context_window'
+        """
+        try:
+            # Get base semantic matches
+            base_results = await self.query(conversation_id, query_text, top_k=top_k * 2)
+
+            if not base_results:
+                return []
+
+            # Re-rank with relevance scoring
+            reranked = self._rerank_by_relevance(base_results, query_text, min_similarity)
+
+            # Enrich with context window
+            enriched_results = []
+            for result in reranked[:top_k]:
+                turn_number = result['metadata'].get('turn_number')
+
+                if turn_number:
+                    # Get surrounding context
+                    context_turns = await self._get_turns_around(
+                        conversation_id,
+                        turn_number,
+                        window=context_window
+                    )
+
+                    result['context_window'] = context_turns
+                    result['has_context'] = len(context_turns) > 0
+
+                enriched_results.append(result)
+
+            return enriched_results
+
+        except Exception as e:
+            print(f"Enhanced query error: {e}")
+            import traceback
+            traceback.print_exc()
+            # Fallback to basic query
+            return await self.query(conversation_id, query_text, top_k)
+
     async def query(
         self,
         conversation_id: str,
@@ -182,7 +240,7 @@ class QdrantAdapter:
     ) -> List[Dict]:
         """
         Adaptive retrieval with Qwen3 + SPLADE + HyDE
-        
+
         Returns list of dicts with 'text', 'similarity', 'metadata'
         """
         try:
@@ -379,6 +437,112 @@ class QdrantAdapter:
         
         return SparseVector(indices=indices, values=values)
     
+    def _rerank_by_relevance(
+        self,
+        results: List[Dict],
+        query: str,
+        min_similarity: float = 0.65
+    ) -> List[Dict]:
+        """
+        Re-rank results by combining semantic similarity and lexical overlap
+
+        Args:
+            results: Initial results from retrieval
+            query: Original query text
+            min_similarity: Minimum similarity threshold
+
+        Returns:
+            Re-ranked and filtered results
+        """
+        query_terms = set(query.lower().split())
+        filtered = []
+
+        for result in results:
+            # Filter low-quality matches
+            if result['similarity'] < min_similarity:
+                continue
+
+            # Calculate lexical overlap
+            result_text = result['text'].lower()
+            result_terms = set(result_text.split())
+            overlap = len(query_terms & result_terms) / len(query_terms) if query_terms else 0
+
+            # Combined scoring (70% semantic, 30% lexical)
+            final_score = (0.7 * result['similarity']) + (0.3 * overlap)
+
+            result['final_score'] = final_score
+            result['lexical_overlap'] = overlap
+            filtered.append(result)
+
+        # Sort by final score
+        filtered.sort(key=lambda x: x['final_score'], reverse=True)
+
+        return filtered
+
+    async def _get_turns_around(
+        self,
+        conversation_id: str,
+        turn_number: int,
+        window: int = 2
+    ) -> List[Dict]:
+        """
+        Get turns before and after a specific turn number
+
+        Args:
+            conversation_id: Conversation ID
+            turn_number: Central turn number
+            window: Number of turns before/after
+
+        Returns:
+            List of turns with their text and metadata
+        """
+        try:
+            start_turn = max(1, turn_number - window)
+            end_turn = turn_number + window
+
+            # Query for turns in range
+            turns = []
+            for i in range(start_turn, end_turn + 1):
+                if i == turn_number:
+                    continue  # Skip the main match (already included)
+
+                # Scroll through collection to find turn
+                turn_filter = Filter(
+                    must=[
+                        FieldCondition(
+                            key="conversation_id",
+                            match=MatchValue(value=conversation_id)
+                        ),
+                        FieldCondition(
+                            key="turn_number",
+                            match=MatchValue(value=i)
+                        )
+                    ]
+                )
+
+                with self._lock:
+                    result = self.client.scroll(
+                        collection_name=self.collection_name,
+                        scroll_filter=turn_filter,
+                        limit=1
+                    )
+
+                if result[0]:  # result is tuple (points, next_offset)
+                    point = result[0][0]
+                    turns.append({
+                        'turn_number': i,
+                        'text': point.payload.get('text', ''),
+                        'metadata': point.payload
+                    })
+
+            # Sort by turn number
+            turns.sort(key=lambda x: x['turn_number'])
+            return turns
+
+        except Exception as e:
+            print(f"Error getting context window: {e}")
+            return []
+
     def delete_conversation(self, conversation_id: str) -> bool:
         """Delete all memories for a conversation"""
         try:
@@ -388,13 +552,13 @@ class QdrantAdapter:
                     match=MatchValue(value=conversation_id)
                 )]
             )
-            
+
             with self._lock:
                 self.client.delete(
                     collection_name=self.collection_name,
                     points_selector=conv_filter
                 )
-            
+
             return True
         except Exception as e:
             print(f"Delete error: {e}")

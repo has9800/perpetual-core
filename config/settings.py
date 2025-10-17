@@ -49,19 +49,28 @@ class Settings(BaseSettings):
     POLAR_API_KEY: str
     POLAR_ORGANIZATION_ID: str
     
-    # Redis Cache
+    # Redis Cache & Token Tracking
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379
     REDIS_DB: int = 0
     REDIS_PASSWORD: Optional[str] = None
-    
+    REDIS_URL: str = "redis://localhost:6379/0"  # Full Redis URL (overrides host/port if set)
+
     # Rate Limiting
     RATE_LIMIT_PER_MINUTE: int = 60
     RATE_LIMIT_PER_DAY: int = 10000
-    
-    # Retrieval
+
+    # Retrieval & Auto-Switching
     RETRIEVAL_TOP_K: int = 5
     CONTEXT_MAX_TOKENS: int = 4096
+
+    # Token Tracking Thresholds (for auto-switching)
+    TOKEN_THRESHOLD_FULL: int = 5000      # < 5k tokens: use full context
+    TOKEN_THRESHOLD_BALANCED: int = 20000 # 5k-20k: use balanced retrieval
+    # 20k+: use safe mode (most aggressive retrieval)
+
+    # Memory Strategies (generic names for different use cases)
+    MEMORY_STRATEGIES: list = ["ui_builder", "code_editor", "chat", "research", "support"]
     
     class Config:
         env_file = ".env"

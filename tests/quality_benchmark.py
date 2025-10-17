@@ -23,7 +23,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core.llm_wrapper import VLLMEngine
 from core.vector_db import QdrantAdapter
-from core.memory_manager import MemoryManager
+from core.enhanced_memory_manager import EnhancedMemoryManager
+from services.token_tracker import TokenTracker
 from difflib import SequenceMatcher
 import numpy as np
 
@@ -82,10 +83,22 @@ class QualityBenchmark:
             collection_name="quality_benchmark"
         )
 
-        # Initialize memory manager
-        self.memory_manager = MemoryManager(
+        # Initialize token tracker with mock Redis (optional for benchmarking)
+        try:
+            import redis
+            redis_client = redis.from_url("redis://localhost:6379/0", decode_responses=True)
+            redis_client.ping()
+            self.token_tracker = TokenTracker(redis_client=redis_client)
+            print("✓ Connected to Redis for token tracking")
+        except Exception as e:
+            print(f"⚠️  Redis not available, running without token tracking: {e}")
+            self.token_tracker = None
+
+        # Initialize enhanced memory manager
+        self.memory_manager = EnhancedMemoryManager(
             vector_db=self.vector_db,
-            cache_capacity=1000  # Cache capacity for recent turns
+            token_tracker=self.token_tracker,
+            cache_capacity=1000
         )
 
         print(f"{Colors.GREEN}✓ Initialization complete{Colors.END}\n")
@@ -473,6 +486,350 @@ Assistant:"""
             'token_savings_pct': 100 * (1 - result_retrieval['total_tokens'] / result_full['total_tokens'])
         }
 
+    def generate_ui_building_conversation(self, num_turns: int) -> List[Dict[str, str]]:
+        """
+        Generate realistic UI building conversation (Lovable-like)
+
+        Args:
+            num_turns: Number of conversation turns to generate
+
+        Returns:
+            List of conversation turns
+        """
+        conversation = []
+
+        # Phase 1: Initial requirements
+        conversation.extend([
+            {"role": "user", "content": "I want to build a landing page for my SaaS product. It's a project management tool called TaskFlow."},
+            {"role": "assistant", "content": "Great! I'll help you build a landing page for TaskFlow. What key features do you want to highlight?"},
+            {"role": "user", "content": "The main features are: task boards, time tracking, team collaboration, and reporting."},
+            {"role": "assistant", "content": "Perfect. Let's start with a hero section that emphasizes efficiency and team collaboration."},
+        ])
+
+        # Phase 2: Hero section
+        if len(conversation) < num_turns:
+            conversation.extend([
+                {"role": "user", "content": "I want a clean, modern hero with a gradient background."},
+                {"role": "assistant", "content": "I'll create a hero section with a blue-purple gradient, bold headline, subtitle, and CTA button."},
+                {"role": "user", "content": "Can you add an illustration or screenshot?"},
+                {"role": "assistant", "content": "Added a product screenshot on the right side with subtle shadow and rounded corners."},
+            ])
+
+        # Phase 3: Features section
+        if len(conversation) < num_turns:
+            conversation.extend([
+                {"role": "user", "content": "Now add a features section with the 4 features I mentioned."},
+                {"role": "assistant", "content": "Created a 2x2 grid with icons for each feature: task boards, time tracking, collaboration, and reporting."},
+                {"role": "user", "content": "Can you make the icons animated on hover?"},
+                {"role": "assistant", "content": "Added scale-up hover effect with smooth transitions for all feature icons."},
+            ])
+
+        # Phase 4: Pricing section
+        if len(conversation) < num_turns:
+            conversation.extend([
+                {"role": "user", "content": "Add a pricing section. We have 3 tiers: Starter ($9), Pro ($29), Enterprise (custom)."},
+                {"role": "assistant", "content": "Created pricing cards with all tiers. Pro tier is highlighted as 'Most Popular'."},
+                {"role": "user", "content": "Can you add feature lists for each tier?"},
+                {"role": "assistant", "content": "Added feature comparisons: Starter (5 projects, 10 users), Pro (unlimited projects, 50 users), Enterprise (everything + SSO)."},
+            ])
+
+        # Phase 5: Testimonials
+        if len(conversation) < num_turns:
+            conversation.extend([
+                {"role": "user", "content": "Add a testimonials section with customer quotes."},
+                {"role": "assistant", "content": "Created testimonial carousel with 3 customer quotes, photos, and company names."},
+                {"role": "user", "content": "Make it auto-scroll every 5 seconds."},
+                {"role": "assistant", "content": "Added auto-scroll with pause-on-hover. Users can also navigate with arrow buttons."},
+            ])
+
+        # Phase 6: Footer
+        if len(conversation) < num_turns:
+            conversation.extend([
+                {"role": "user", "content": "Add a footer with social links and newsletter signup."},
+                {"role": "assistant", "content": "Created footer with 4 columns: Product, Company, Resources, and Newsletter form."},
+                {"role": "user", "content": "Can you add LinkedIn, Twitter, and GitHub icons?"},
+                {"role": "assistant", "content": "Added social media icons with hover effects and external links."},
+            ])
+
+        # Phase 7: Mobile responsive
+        if len(conversation) < num_turns:
+            conversation.extend([
+                {"role": "user", "content": "Make sure it's mobile responsive."},
+                {"role": "assistant", "content": "Added responsive breakpoints. Features grid becomes 1 column, hero stacks vertically on mobile."},
+                {"role": "user", "content": "The pricing cards are too cramped on mobile."},
+                {"role": "assistant", "content": "Made pricing cards full-width on mobile with horizontal scroll for easy comparison."},
+            ])
+
+        # Phase 8: SEO and meta
+        if len(conversation) < num_turns:
+            conversation.extend([
+                {"role": "user", "content": "Add SEO meta tags and Open Graph tags."},
+                {"role": "assistant", "content": "Added title, description, OG tags, and Twitter Card meta for social sharing."},
+                {"role": "user", "content": "What should the meta description be?"},
+                {"role": "assistant", "content": "Suggested: 'TaskFlow - Modern project management with task boards, time tracking, and team collaboration. Start free today.'"},
+            ])
+
+        # Phase 9: Analytics
+        if len(conversation) < num_turns:
+            conversation.extend([
+                {"role": "user", "content": "Add Google Analytics tracking."},
+                {"role": "assistant", "content": "Added GA4 script in <head> with your tracking ID. Also added event tracking for CTA clicks."},
+                {"role": "user", "content": "Track pricing card clicks too."},
+                {"role": "assistant", "content": "Added click event tracking for all pricing CTA buttons with plan name as parameter."},
+            ])
+
+        # Phase 10: Forms and validation
+        if len(conversation) < num_turns:
+            conversation.extend([
+                {"role": "user", "content": "The newsletter form needs validation."},
+                {"role": "assistant", "content": "Added email validation with regex and error messages. Disabled submit until valid."},
+                {"role": "user", "content": "Show a success message after signup."},
+                {"role": "assistant", "content": "Added toast notification on successful signup with 'Check your email' message."},
+            ])
+
+        # Phase 11: Performance
+        if len(conversation) < num_turns:
+            conversation.extend([
+                {"role": "user", "content": "The page loads slowly. Can you optimize images?"},
+                {"role": "assistant", "content": "Converted images to WebP format and added lazy loading. Page load reduced from 3.2s to 1.1s."},
+                {"role": "user", "content": "What about the fonts?"},
+                {"role": "assistant", "content": "Using font-display: swap for Google Fonts to prevent flash of invisible text (FOIT)."},
+            ])
+
+        # Phase 12: Accessibility
+        if len(conversation) < num_turns:
+            conversation.extend([
+                {"role": "user", "content": "Make it accessible for screen readers."},
+                {"role": "assistant", "content": "Added ARIA labels, alt text for images, and semantic HTML. Keyboard navigation works."},
+                {"role": "user", "content": "Test it with WAVE accessibility checker."},
+                {"role": "assistant", "content": "WAVE shows 0 errors. Added skip-to-content link and increased color contrast ratios."},
+            ])
+
+        # Phase 13: Final tweaks
+        if len(conversation) < num_turns:
+            conversation.extend([
+                {"role": "user", "content": "The CTA button color doesn't pop enough."},
+                {"role": "assistant", "content": "Changed CTA from blue to bright orange (#FF6B35) with higher contrast. Conversion rate improved."},
+                {"role": "user", "content": "Add a subtle animation when scrolling into view."},
+                {"role": "assistant", "content": "Added fade-in-up animations using Intersection Observer for features and pricing sections."},
+            ])
+
+        # Phase 14: Deployment
+        if len(conversation) < num_turns:
+            conversation.extend([
+                {"role": "user", "content": "How do I deploy this to Vercel?"},
+                {"role": "assistant", "content": "Connect GitHub repo to Vercel. It auto-deploys on push to main. Custom domain supported."},
+                {"role": "user", "content": "Set up automatic deployments for pull requests."},
+                {"role": "assistant", "content": "Enabled preview deployments. Each PR gets a unique URL for testing before merge."},
+            ])
+
+        # Additional padding turns if needed
+        while len(conversation) < num_turns:
+            conversation.extend([
+                {"role": "user", "content": "Can you add a FAQ section?"},
+                {"role": "assistant", "content": "Added collapsible FAQ with 6 common questions about pricing, features, and support."},
+                {"role": "user", "content": "Make the FAQ items expand smoothly."},
+                {"role": "assistant", "content": "Added CSS transitions for smooth expand/collapse with max-height animation."},
+            ])
+
+        return conversation[:num_turns]
+
+    async def test_50_turn_conversation(self) -> Dict[str, Any]:
+        """Test: 50-turn UI building conversation"""
+        print(f"\n{Colors.BOLD}{Colors.BLUE}Test 5: 50-Turn UI Building Conversation{Colors.END}")
+        print("Scenario: Long conversation building a SaaS landing page (Lovable-like)\n")
+
+        conversation = self.generate_ui_building_conversation(50)
+
+        test_query = {
+            "question": "Summarize all the sections we built, the performance optimizations we made, and which tier of pricing has SSO. Also remind me what color we changed the CTA button to.",
+            "context_needed": ["hero", "features", "pricing", "SSO", "Enterprise", "WebP", "lazy loading", "orange CTA"]
+        }
+
+        # Memory config for 50 turns
+        memory_config = {"recent_turns": 30, "semantic_top_k": 5}
+
+        # Run with enhanced retrieval
+        print(f"{Colors.CYAN}Running with enhanced retrieval (30 recent + 5 semantic)...{Colors.END}")
+        result_retrieval = await self.run_conversation_enhanced(
+            conversation,
+            test_query,
+            memory_config=memory_config
+        )
+
+        # Run with full context
+        print(f"{Colors.CYAN}Running with full context (baseline)...{Colors.END}")
+        result_full = await self.run_conversation(
+            conversation,
+            test_query,
+            use_retrieval=False
+        )
+
+        # Compare
+        similarity = self.calculate_similarity(result_retrieval['response'], result_full['response'])
+        semantic_similarity = self.calculate_semantic_similarity(result_retrieval['response'], result_full['response'])
+
+        print(f"\n{Colors.GREEN}Results:{Colors.END}")
+        print(f"  Retrieval tokens: {result_retrieval['total_tokens']}")
+        print(f"  Full context tokens: {result_full['total_tokens']}")
+        print(f"  Token savings: {Colors.BOLD}{100 * (1 - result_retrieval['total_tokens'] / result_full['total_tokens']):.1f}%{Colors.END}")
+        print(f"  Text similarity: {Colors.BOLD}{similarity:.2%}{Colors.END}")
+        print(f"  Semantic similarity: {Colors.BOLD}{semantic_similarity:.2%}{Colors.END}")
+
+        return {
+            'test_name': '50_turn_ui_building',
+            'retrieval': result_retrieval,
+            'full_context': result_full,
+            'text_similarity': similarity,
+            'semantic_similarity': semantic_similarity,
+            'token_savings_pct': 100 * (1 - result_retrieval['total_tokens'] / result_full['total_tokens'])
+        }
+
+    async def test_100_turn_conversation(self) -> Dict[str, Any]:
+        """Test: 100-turn extended UI building conversation"""
+        print(f"\n{Colors.BOLD}{Colors.BLUE}Test 6: 100-Turn Extended UI Building Conversation{Colors.END}")
+        print("Scenario: Very long conversation with multiple iterations and changes\n")
+
+        conversation = self.generate_ui_building_conversation(100)
+
+        test_query = {
+            "question": "Create a comprehensive summary document covering: 1) All page sections, 2) Performance metrics before/after optimization, 3) Accessibility improvements, 4) Deployment setup. Be specific about the details.",
+            "context_needed": ["all sections", "3.2s to 1.1s", "WebP", "WAVE", "ARIA", "Vercel", "preview deployments"]
+        }
+
+        # Memory config for 100 turns (more aggressive retrieval)
+        memory_config = {"recent_turns": 40, "semantic_top_k": 7}
+
+        # Run with enhanced retrieval
+        print(f"{Colors.CYAN}Running with enhanced retrieval (40 recent + 7 semantic)...{Colors.END}")
+        result_retrieval = await self.run_conversation_enhanced(
+            conversation,
+            test_query,
+            memory_config=memory_config
+        )
+
+        # Run with full context
+        print(f"{Colors.CYAN}Running with full context (baseline)...{Colors.END}")
+        result_full = await self.run_conversation(
+            conversation,
+            test_query,
+            use_retrieval=False
+        )
+
+        # Compare
+        similarity = self.calculate_similarity(result_retrieval['response'], result_full['response'])
+        semantic_similarity = self.calculate_semantic_similarity(result_retrieval['response'], result_full['response'])
+
+        print(f"\n{Colors.GREEN}Results:{Colors.END}")
+        print(f"  Retrieval tokens: {result_retrieval['total_tokens']}")
+        print(f"  Full context tokens: {result_full['total_tokens']}")
+        print(f"  Token savings: {Colors.BOLD}{100 * (1 - result_retrieval['total_tokens'] / result_full['total_tokens']):.1f}%{Colors.END}")
+        print(f"  Text similarity: {Colors.BOLD}{similarity:.2%}{Colors.END}")
+        print(f"  Semantic similarity: {Colors.BOLD}{semantic_similarity:.2%}{Colors.END}")
+
+        return {
+            'test_name': '100_turn_ui_building',
+            'retrieval': result_retrieval,
+            'full_context': result_full,
+            'text_similarity': similarity,
+            'semantic_similarity': semantic_similarity,
+            'token_savings_pct': 100 * (1 - result_retrieval['total_tokens'] / result_full['total_tokens'])
+        }
+
+    async def run_conversation_enhanced(
+        self,
+        conversation: List[Dict[str, str]],
+        test_query: Dict[str, str],
+        memory_config: Dict[str, int] = None
+    ) -> Dict[str, Any]:
+        """
+        Run conversation using EnhancedMemoryManager with context window retrieval
+
+        Args:
+            conversation: List of conversation turns
+            test_query: Test query with question
+            memory_config: Memory configuration
+
+        Returns:
+            Result dict with response and metrics
+        """
+        if memory_config is None:
+            memory_config = {"recent_turns": 30, "semantic_top_k": 5}
+
+        conversation_id = f"test_enhanced_{int(time.time())}"
+
+        # Build conversation history
+        for i, turn in enumerate(conversation):
+            text = f"{turn['role'].capitalize()}: {turn['content']}"
+            self.memory_manager.add_turn(
+                conversation_id=conversation_id,
+                text=text,
+                metadata={
+                    'role': turn['role'],
+                    'turn_number': i + 1,
+                    'timestamp': time.time()
+                }
+            )
+
+            # Track tokens if tracker available
+            if self.token_tracker and turn['role'] == 'assistant':
+                user_msg = conversation[i-1]['content'] if i > 0 else ""
+                self.token_tracker.track_turn(
+                    conversation_id=conversation_id,
+                    user_message=user_msg,
+                    assistant_message=turn['content']
+                )
+
+        # Retrieve context using enhanced manager
+        query = test_query['question']
+        retrieval_start = time.time()
+
+        memory_results = await self.memory_manager.retrieve_context_enhanced(
+            conversation_id=conversation_id,
+            query=query,
+            token_budget=8000,
+            strategy="ui_builder"
+        )
+
+        retrieval_latency = (time.time() - retrieval_start) * 1000
+
+        # Build prompt with enhanced context
+        context_string = memory_results.get('context', '')
+
+        full_prompt = f"""Context from conversation history:
+{context_string}
+
+Current question: {query}
+Assistant:"""
+
+        # Generate response
+        generation_start = time.time()
+        outputs = self.llm.generate(
+            prompts=[full_prompt],
+            max_tokens=512,
+            temperature=0.7,
+            top_p=0.9,
+            stop=["User:", "\n\n\n"]
+        )
+
+        response = outputs[0].outputs[0].text.strip()
+        generation_latency = (time.time() - generation_start) * 1000
+
+        # Count tokens
+        prompt_tokens = len(full_prompt.split())
+        response_tokens = len(response.split())
+
+        return {
+            'response': response,
+            'retrieval_latency_ms': retrieval_latency,
+            'generation_latency_ms': generation_latency,
+            'prompt_tokens': prompt_tokens,
+            'response_tokens': response_tokens,
+            'total_tokens': prompt_tokens + response_tokens,
+            'mode_used': memory_results.get('mode_used', 'balanced'),
+            'method': 'enhanced_retrieval'
+        }
+
     async def run_all_tests(self) -> Dict[str, Any]:
         """Run all quality tests and aggregate results"""
         print(f"\n{Colors.BOLD}{Colors.HEADER}{'='*60}{Colors.END}")
@@ -499,6 +856,13 @@ Assistant:"""
 
         test_4 = await self.test_long_form_generation()
         results['tests'].append(test_4)
+
+        # NEW: Long conversation tests
+        test_5 = await self.test_50_turn_conversation()
+        results['tests'].append(test_5)
+
+        test_6 = await self.test_100_turn_conversation()
+        results['tests'].append(test_6)
 
         # Calculate aggregate metrics
         avg_text_similarity = np.mean([t['text_similarity'] for t in results['tests']])

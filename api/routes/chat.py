@@ -16,7 +16,8 @@ from models.responses import (
 from api.dependencies import (
     get_vllm_engine,
     get_memory_manager,
-    get_supabase
+    get_supabase,
+    get_token_tracker
 )
 from services.billing_service import get_billing_service
 from services.llm_proxy_service import get_llm_proxy_service
@@ -35,6 +36,7 @@ async def chat_completions(
     request: Request,
     chat_request: ChatCompletionRequest,
     memory_manager = Depends(get_memory_manager),
+    token_tracker = Depends(get_token_tracker),
     billing_service = Depends(get_billing_service),
     llm_proxy_service = Depends(get_llm_proxy_service),
     supabase = Depends(get_supabase)
@@ -57,39 +59,56 @@ async def chat_completions(
     user_message = chat_request.messages[-1].content
     
     try:
-        # Step 1: Retrieve relevant memories (if enabled)
+        # Step 1: Auto-switching logic - determine if we should use retrieval
+        mode_used = "full"
+        use_retrieval = True
+
+        if token_tracker:
+            # Use token tracker to determine mode
+            use_retrieval, mode_used = token_tracker.should_use_retrieval(conversation_id)
+
+        # Step 2: Retrieve relevant memories using enhanced retrieval (if enabled)
         retrieved_context = []
         retrieval_latency = 0
         memory_settings = chat_request.get_memory_settings()
 
-        if chat_request.use_memory and memory_settings['semantic_top_k'] > 0:
+        if chat_request.use_memory:
             retrieval_start = time.time()
 
-            # Query memory with configurable top_k
-            memory_results = await memory_manager.retrieve_context(
-                conversation_id=conversation_id,
-                query=user_message,
-                top_k=memory_settings['semantic_top_k']
-            )
+            if use_retrieval:
+                # USE ENHANCED RETRIEVAL with context window and re-ranking
+                memory_results = await memory_manager.retrieve_context_enhanced(
+                    conversation_id=conversation_id,
+                    query=user_message,
+                    token_budget=8000,
+                    strategy=chat_request.memory_config.get('strategy', 'ui_builder') if hasattr(chat_request, 'memory_config') else 'ui_builder'
+                )
 
-            if memory_results['success']:
-                retrieved_context = memory_results['results']
+                mode_used = memory_results.get('mode_used', mode_used)
+
+                # Extract context string
+                context_string = memory_results.get('context', '')
+            else:
+                # FULL MODE: Use all recent history (no retrieval needed)
+                # Get all recent turns directly from memory manager
+                recent_turns = memory_manager.get_recent_turns(
+                    conversation_id=conversation_id,
+                    limit=9999  # Get everything
+                )
+                context_string = "\n".join(recent_turns)
 
             retrieval_latency = (time.time() - retrieval_start) * 1000
-        
-        # Step 2: Build prompt with context
+        else:
+            context_string = ""
+
+        # Step 3: Build prompt with context
         messages = chat_request.messages.copy()
 
-        if retrieved_context:
+        if context_string:
             # Inject context before user message
-            context_text = "\n\n".join([
-                f"[Previous context {i+1}]: {r['text']}"
-                for i, r in enumerate(retrieved_context[:3])
-            ])
-
             context_message = {
                 "role": "system",
-                "content": f"Relevant context from conversation history:\n{context_text}"
+                "content": f"Relevant context from conversation history:\n{context_string}"
             }
 
             # Insert before last message
@@ -116,24 +135,36 @@ async def chat_completions(
         generated_text = llm_response["choices"][0]["message"]["content"]
         generation_latency = (time.time() - generation_start) * 1000
 
-        # Step 4: Store exchange in memory (non-blocking background task)
+        # Step 4: Track tokens and store exchange in memory (non-blocking background task)
         if chat_request.use_memory:
             # Create background task for storing (doesn't block response)
             async def store_memory_background():
                 try:
-                    # Store user message
-                    memory_manager.vector_db.add(
+                    # Get turn number for metadata
+                    turn_number = memory_manager.get_conversation_length(conversation_id) + 1
+
+                    # Store user message with turn number
+                    memory_manager.add_turn(
                         conversation_id=conversation_id,
                         text=f"User: {user_message}",
-                        metadata={'role': 'user', 'timestamp': time.time()}
+                        metadata={'role': 'user', 'turn_number': turn_number, 'timestamp': time.time()}
                     )
 
-                    # Store assistant response
-                    memory_manager.vector_db.add(
+                    # Store assistant response with turn number
+                    memory_manager.add_turn(
                         conversation_id=conversation_id,
                         text=f"Assistant: {generated_text}",
-                        metadata={'role': 'assistant', 'timestamp': time.time()}
+                        metadata={'role': 'assistant', 'turn_number': turn_number + 1, 'timestamp': time.time()}
                     )
+
+                    # Track tokens for auto-switching
+                    if token_tracker:
+                        token_tracker.track_turn(
+                            conversation_id=conversation_id,
+                            user_message=user_message,
+                            assistant_message=generated_text,
+                            actual_tokens=total_tokens
+                        )
                 except Exception as e:
                     print(f"Background memory storage error: {e}")
 
@@ -197,8 +228,9 @@ async def chat_completions(
                 'retrieval_latency_ms': round(retrieval_latency, 2),
                 'generation_latency_ms': round(generation_latency, 2),
                 'total_latency_ms': round(total_latency, 2),
-                'memories_used': len(retrieved_context),
-                'cached': len(retrieved_context) > 0 and retrieval_latency < 10
+                'mode_used': mode_used,
+                'use_retrieval': use_retrieval,
+                'cached': retrieval_latency < 10 if use_retrieval else False
             }
         )
         
