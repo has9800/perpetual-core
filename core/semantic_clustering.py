@@ -128,7 +128,45 @@ Return ONLY valid JSON, nothing else."""
             elif "```" in response_text:
                 response_text = response_text.split("```")[1].split("```")[0].strip()
 
-            result = json.loads(response_text)
+            # Try to parse JSON
+            try:
+                result = json.loads(response_text)
+            except json.JSONDecodeError as e:
+                print(f"  [Warning] Failed to parse JSON from local model: {e}")
+                print(f"  Raw response (first 300 chars): {response_text[:300]}")
+
+                # Try to extract cluster data manually
+                import re
+
+                # Look for cluster_id patterns
+                cluster_ids = []
+                label_pattern = re.findall(r'"cluster_id":\s*(\d+)', response_text)
+                if label_pattern:
+                    cluster_ids = [int(x) for x in label_pattern]
+
+                if not cluster_ids:
+                    # Fallback: create clusters by grouping similar sized chunks
+                    print(f"  [Fallback] Creating {num_clusters} evenly distributed clusters")
+                    turns_per_cluster = len(conversation) // num_clusters
+                    cluster_ids = list(range(num_clusters))
+
+                # Build minimal cluster structure
+                result = {
+                    "clusters": [
+                        {
+                            "cluster_id": i,
+                            "label": f"Topic {i+1}",
+                            "turn_numbers": list(range(
+                                i * (len(conversation) // num_clusters) + 1,
+                                min((i + 1) * (len(conversation) // num_clusters) + 1, len(conversation) + 1)
+                            )),
+                            "summary": f"Conversation segment {i+1}"
+                        }
+                        for i in range(num_clusters)
+                    ]
+                }
+                print(f"  [Fallback] Created {len(result['clusters'])} clusters")
+
             cost = 0.0  # Local vLLM is free!
         else:
             # Use OpenAI API
@@ -268,13 +306,26 @@ Return ONLY valid JSON, nothing else."""
 
             response_text = outputs[0].outputs[0].text.strip()
 
-            # Extract JSON
+            # Extract JSON (more robust)
             if "```json" in response_text:
                 response_text = response_text.split("```json")[1].split("```")[0].strip()
             elif "```" in response_text:
                 response_text = response_text.split("```")[1].split("```")[0].strip()
 
-            result = json.loads(response_text)
+            # Try to find JSON in the response
+            import re
+            json_match = re.search(r'\{[^{}]*"relevant_cluster_ids"[^{}]*\}', response_text)
+            if json_match:
+                response_text = json_match.group(0)
+
+            try:
+                result = json.loads(response_text)
+            except json.JSONDecodeError:
+                # Fallback: extract numbers manually
+                print(f"  [Warning] Could not parse JSON, extracting cluster IDs manually")
+                print(f"  Raw response: {response_text[:200]}")
+                numbers = re.findall(r'\d+', response_text)
+                result = {"relevant_cluster_ids": [int(n) for n in numbers[:top_k]]}
         else:
             # Use OpenAI API
             response = await self.client.chat.completions.create(
