@@ -170,15 +170,24 @@ Return ONLY valid JSON, nothing else."""
             cost = 0.0  # Local vLLM is free!
         else:
             # Use OpenAI API
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=[
+            # Build request params (some models don't support temperature or response_format)
+            request_params = {
+                "model": self.model,
+                "messages": [
                     {"role": "system", "content": "You are an expert at analyzing conversations and grouping related topics semantically."},
                     {"role": "user", "content": prompt}
-                ],
-                temperature=0.3,
-                response_format={"type": "json_object"}
-            )
+                ]
+            }
+
+            # Only add temperature for models that support it
+            if "gpt-5" not in self.model:
+                request_params["temperature"] = 0.3
+
+            # Only add response_format for models that support it
+            if "gpt-4" in self.model or "gpt-3.5" in self.model:
+                request_params["response_format"] = {"type": "json_object"}
+
+            response = await self.client.chat.completions.create(**request_params)
 
             result = json.loads(response.choices[0].message.content)
 
@@ -336,15 +345,24 @@ Return ONLY valid JSON, nothing else."""
                 result = {"relevant_cluster_ids": [int(n) for n in numbers[:top_k]]}
         else:
             # Use OpenAI API
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=[
+            # Build request params (some models don't support temperature or response_format)
+            request_params = {
+                "model": self.model,
+                "messages": [
                     {"role": "system", "content": "You are an expert at matching queries to relevant conversation topics."},
                     {"role": "user", "content": prompt}
-                ],
-                temperature=0.1,
-                response_format={"type": "json_object"}
-            )
+                ]
+            }
+
+            # Only add temperature for models that support it
+            if "gpt-5" not in self.model:
+                request_params["temperature"] = 0.1
+
+            # Only add response_format for models that support it
+            if "gpt-4" in self.model or "gpt-3.5" in self.model:
+                request_params["response_format"] = {"type": "json_object"}
+
+            response = await self.client.chat.completions.create(**request_params)
 
             result = json.loads(response.choices[0].message.content)
 
