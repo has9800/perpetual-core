@@ -85,7 +85,7 @@ class QualityBenchmark:
         # Initialize memory manager
         self.memory_manager = MemoryManager(
             vector_db=self.vector_db,
-            max_context_turns=50  # Allow full context for baseline
+            cache_capacity=1000  # Cache capacity for recent turns
         )
 
         print(f"{Colors.GREEN}✓ Initialization complete{Colors.END}\n")
