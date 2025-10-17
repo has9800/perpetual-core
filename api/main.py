@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 import time
 
 from config.settings import get_settings
-from api.routes import chat, memory, health
+from api.routes import chat, memory, health, provider_keys
 from api.middleware.auth import AuthMiddleware
 from api.middleware.rate_limit import RateLimitMiddleware
 from api.middleware.request_logging import RequestLoggingMiddleware
@@ -33,18 +33,26 @@ async def lifespan(app: FastAPI):
     """
     print("="*80)
     print(f"Starting {settings.APP_NAME} v{settings.VERSION}")
+    print(f"Mode: {settings.MODE.upper()}")
     print("="*80)
-    
-    # Initialize vLLM
-    print("\n1. Initializing vLLM engine...")
-    vllm_engine = create_vllm_engine(
-        model_name=settings.MODEL_NAME,
-        quantization=settings.MODEL_QUANTIZATION,
-        gpu_memory_utilization=settings.GPU_MEMORY_UTILIZATION,
-        max_model_len=settings.MAX_MODEL_LEN
-    )
-    init_vllm_engine(vllm_engine)
-    
+
+    vllm_engine = None
+
+    # Initialize vLLM (only in local mode)
+    if settings.MODE == "local":
+        print("\n1. Initializing vLLM engine...")
+        vllm_engine = create_vllm_engine(
+            model_name=settings.MODEL_NAME,
+            quantization=settings.MODEL_QUANTIZATION,
+            gpu_memory_utilization=settings.GPU_MEMORY_UTILIZATION,
+            max_model_len=settings.MAX_MODEL_LEN
+        )
+        init_vllm_engine(vllm_engine)
+    else:
+        print("\n1. Proxy mode - skipping vLLM initialization")
+        # Initialize dummy vLLM for dependencies (optional)
+        init_vllm_engine(None)
+
     # Initialize Vector DB
     print("\n2. Initializing vector database...")
     vector_db = create_vector_db(
@@ -55,7 +63,7 @@ async def lifespan(app: FastAPI):
         llm_engine=vllm_engine
     )
     init_vector_db(vector_db)
-    
+
     # Initialize Memory Manager
     print("\n3. Initializing memory manager...")
     memory_manager = MemoryManager(
@@ -63,13 +71,19 @@ async def lifespan(app: FastAPI):
         cache_capacity=1000
     )
     init_memory_manager(memory_manager)
-    
+
     print("\n" + "="*80)
-    print(f"✅ {settings.APP_NAME} ready on http://{settings.API_HOST}:{settings.API_PORT}")
+    if settings.MODE == "proxy":
+        print(f"✅ {settings.APP_NAME} ready (PROXY MODE)")
+        print(f"   Forwarding to: OpenAI, Anthropic")
+    else:
+        print(f"✅ {settings.APP_NAME} ready (LOCAL MODE)")
+        print(f"   Model: {settings.MODEL_NAME}")
+    print(f"   Endpoint: http://{settings.API_HOST}:{settings.API_PORT}")
     print("="*80)
-    
+
     yield
-    
+
     # Shutdown
     print("\nShutting down...")
 
@@ -99,6 +113,7 @@ app.add_middleware(AuthMiddleware)
 app.include_router(health.router, tags=["health"])
 app.include_router(chat.router, prefix=settings.API_PREFIX, tags=["chat"])
 app.include_router(memory.router, prefix=settings.API_PREFIX, tags=["memory"])
+app.include_router(provider_keys.router, prefix=settings.API_PREFIX, tags=["provider-keys"])
 
 
 # Global exception handler

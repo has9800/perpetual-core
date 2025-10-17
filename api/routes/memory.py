@@ -6,7 +6,6 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from models.requests import MemoryQueryRequest, MemoryAddRequest, MemoryDeleteRequest
 from models.responses import MemoryQueryResponse, MemoryAddResponse, MemoryResult
 from api.dependencies import get_vector_db, get_supabase
-from services.cache_service import get_cache_service
 from utils.helpers import resolve_conversation_id
 import time
 
@@ -17,8 +16,7 @@ router = APIRouter(prefix="/memory", tags=["memory"])
 async def query_memory(
     request: Request,
     query_request: MemoryQueryRequest,
-    vector_db = Depends(get_vector_db),
-    cache_service = Depends(get_cache_service)
+    vector_db = Depends(get_vector_db)
 ):
     """
     Query conversation memory without generating response
@@ -34,29 +32,15 @@ async def query_memory(
     conversation_id = resolve_conversation_id(query_request, user)
     
     try:
-        # Check cache first
-        cached_results = cache_service.get(conversation_id, query_request.query)
-        
-        if cached_results:
-            query_time = (time.time() - start_time) * 1000
-            
-            return MemoryQueryResponse(
-                success=True,
-                results=[MemoryResult(**r) for r in cached_results],
-                total_found=len(cached_results),
-                query_time_ms=round(query_time, 2),
-                conversation_id=conversation_id
-            )
-        
         # Query vector DB
         results = await vector_db.query(
             conversation_id=conversation_id,
             query_text=query_request.query,
             top_k=query_request.top_k
         )
-        
+
         query_time = (time.time() - start_time) * 1000
-        
+
         # Format results
         formatted_results = [
             MemoryResult(
@@ -67,14 +51,7 @@ async def query_memory(
             )
             for r in results
         ]
-        
-        # Cache results
-        cache_service.set(
-            conversation_id,
-            query_request.query,
-            [r.dict() for r in formatted_results]
-        )
-        
+
         return MemoryQueryResponse(
             success=True,
             results=formatted_results,
@@ -92,8 +69,7 @@ async def query_memory(
 async def add_memory(
     request: Request,
     add_request: MemoryAddRequest,
-    vector_db = Depends(get_vector_db),
-    cache_service = Depends(get_cache_service)
+    vector_db = Depends(get_vector_db)
 ):
     """
     Manually add memory to conversation
@@ -112,11 +88,8 @@ async def add_memory(
             text=add_request.text,
             metadata=add_request.metadata
         )
-        
+
         if success:
-            # Invalidate cache for this conversation
-            cache_service.invalidate(conversation_id)
-            
             return MemoryAddResponse(
                 success=True,
                 message="Memory added successfully",
@@ -134,8 +107,7 @@ async def add_memory(
 async def delete_conversation(
     request: Request,
     delete_request: MemoryDeleteRequest,
-    vector_db = Depends(get_vector_db),
-    cache_service = Depends(get_cache_service)
+    vector_db = Depends(get_vector_db)
 ):
     """
     Delete all memories for a conversation
@@ -150,11 +122,8 @@ async def delete_conversation(
     try:
         # Delete from vector DB
         success = vector_db.delete_conversation(conversation_id)
-        
+
         if success:
-            # Invalidate cache
-            cache_service.invalidate(conversation_id)
-            
             return {
                 "success": True,
                 "message": f"Deleted all memories for conversation {conversation_id}"

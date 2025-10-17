@@ -14,13 +14,22 @@ class Settings(BaseSettings):
     APP_NAME: str = "Perpetual AI"
     VERSION: str = "2.0.0"
     DEBUG: bool = False
-    
+
     # API
     API_HOST: str = "0.0.0.0"
     API_PORT: int = 8000
     API_PREFIX: str = "/v1"
-    
-    # Model
+
+    # Mode: "proxy" or "local"
+    # proxy = forward to external APIs (OpenAI, Anthropic)
+    # local = use local vLLM inference
+    MODE: str = "proxy"
+
+    # External API Keys (for proxy mode)
+    OPENAI_API_KEY: Optional[str] = None
+    ANTHROPIC_API_KEY: Optional[str] = None
+
+    # Model (for local mode)
     MODEL_NAME: str = "mistralai/Mistral-7B-Instruct-v0.2"
     MODEL_QUANTIZATION: str = "gptq"
     GPU_MEMORY_UTILIZATION: float = 0.85

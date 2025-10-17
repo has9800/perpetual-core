@@ -4,7 +4,7 @@ Health check and metrics endpoints
 from fastapi import APIRouter, Depends
 from models.responses import HealthResponse, MetricsResponse
 from api.dependencies import get_vllm_engine, get_vector_db, get_supabase
-from services.cache_service import get_cache_service
+from services.metrics_service import get_metrics_service
 from config.settings import get_settings
 import time
 
@@ -53,24 +53,20 @@ async def health_check():
 
 
 @router.get("/metrics", response_model=MetricsResponse)
-async def get_metrics(
-    cache_service = Depends(get_cache_service)
-):
+async def get_metrics():
     """
     Metrics endpoint
     Returns usage statistics
     """
     uptime = time.time() - _start_time
-    
+
     avg_latency = sum(_latencies) / len(_latencies) if _latencies else 0
-    
-    cache_stats = cache_service.get_stats()
-    
+
     return MetricsResponse(
         total_requests=_total_requests,
         total_tokens=_total_tokens,
         avg_latency_ms=round(avg_latency, 2),
-        cache_hit_rate=cache_stats['hit_rate_percent'] / 100,
+        cache_hit_rate=0.0,  # No caching
         uptime_seconds=round(uptime, 2)
     )
 
@@ -78,11 +74,22 @@ async def get_metrics(
 def record_request_metrics(tokens: int, latency_ms: float):
     """Record metrics for a request"""
     global _total_requests, _total_tokens, _latencies
-    
+
     _total_requests += 1
     _total_tokens += tokens
     _latencies.append(latency_ms)
-    
+
     # Keep only last 1000 latencies
     if len(_latencies) > 1000:
         _latencies = _latencies[-1000:]
+
+
+@router.get("/prometheus")
+async def prometheus_metrics(
+    metrics_service = Depends(get_metrics_service)
+):
+    """
+    Prometheus metrics endpoint
+    Returns metrics in Prometheus format for scraping
+    """
+    return metrics_service.export_metrics()

@@ -6,7 +6,6 @@ from fastapi import Depends, HTTPException
 from typing import Dict
 from services.auth_service import get_auth_service, AuthService
 from services.billing_service import get_billing_service, BillingService
-from services.cache_service import get_cache_service, CacheService
 from supabase import create_client, Client
 from config.settings import get_settings
 import time
@@ -44,10 +43,8 @@ def get_current_user(
 
 
 def get_vllm_engine():
-    """Get vLLM engine instance"""
+    """Get vLLM engine instance (optional, may be None in proxy mode)"""
     global _vllm_engine
-    if _vllm_engine is None:
-        raise HTTPException(500, "vLLM engine not initialized")
     return _vllm_engine
 
 
