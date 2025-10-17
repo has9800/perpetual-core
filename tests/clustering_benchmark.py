@@ -52,6 +52,7 @@ class ClusteringBenchmark:
         qdrant_url: str = None,
         qdrant_api_key: str = None,
         openai_api_key: str = None,
+        openai_model: str = "gpt-4o-mini",
         skip_gpt4o: bool = False
     ):
         """Initialize benchmark with all clustering methods"""
@@ -100,10 +101,10 @@ class ClusteringBenchmark:
             except Exception as e:
                 # Fall back to OpenAI if available
                 try:
-                    self.semantic_clusterer = SemanticClusterer(api_key=openai_api_key)
+                    self.semantic_clusterer = SemanticClusterer(api_key=openai_api_key, model=openai_model)
                     self.has_semantic = True
-                    self.semantic_method = "GPT-4o-mini"
-                    print(f"{Colors.GREEN}✓ Using GPT-4o-mini for semantic clustering{Colors.END}")
+                    self.semantic_method = openai_model
+                    print(f"{Colors.GREEN}✓ Using {openai_model} for semantic clustering{Colors.END}")
                 except ValueError as e2:
                     print(f"{Colors.YELLOW}⚠️  Semantic clustering disabled: {e2}{Colors.END}")
                     print(f"{Colors.YELLOW}   Will run FREE comparison: No Clustering vs K-means{Colors.END}")
@@ -608,8 +609,10 @@ async def main():
     parser.add_argument('--qdrant-url', type=str, default=None)
     parser.add_argument('--qdrant-api-key', type=str, default=None)
     parser.add_argument('--openai-api-key', type=str, default=None)
+    parser.add_argument('--openai-model', type=str, default='gpt-4o-mini',
+                      help='OpenAI model for clustering (gpt-5-nano, gpt-4o-mini, etc.)')
     parser.add_argument('--skip-gpt4o', action='store_true',
-                      help='Skip GPT-4o clustering (FREE test: no-clustering vs k-means only)')
+                      help='Skip semantic clustering (FREE test: no-clustering vs k-means only)')
 
     args = parser.parse_args()
 
@@ -618,16 +621,29 @@ async def main():
         qdrant_url=args.qdrant_url,
         qdrant_api_key=args.qdrant_api_key,
         openai_api_key=args.openai_api_key,
+        openai_model=args.openai_model,
         skip_gpt4o=args.skip_gpt4o
     )
 
     results = await benchmark.run_all_tests()
 
-    # Exit code based on GPT-4o advantage
+    # Exit code based on semantic clustering advantage (if available)
     comparison = results['tests'][0]['comparison']
-    gpt4o_acc = comparison['GPT-4o Clustering']['multi_hop_accuracy']
 
-    sys.exit(0 if gpt4o_acc >= 0.85 else 1)
+    # Find the semantic clustering result (could be GPT-4o or Local Mistral)
+    semantic_key = None
+    for key in comparison.keys():
+        if 'Clustering' in key and key != 'No Clustering' and key != 'K-means':
+            semantic_key = key
+            break
+
+    if semantic_key:
+        semantic_acc = comparison[semantic_key]['multi_hop_accuracy']
+        sys.exit(0 if semantic_acc >= 0.85 else 1)
+    else:
+        # No semantic clustering, check if k-means is good
+        kmeans_acc = comparison['K-means']['multi_hop_accuracy']
+        sys.exit(0 if kmeans_acc >= 0.75 else 1)
 
 
 if __name__ == "__main__":

@@ -244,13 +244,21 @@ Ensure all turns are assigned to exactly one cluster."""
         return prompt
 
     def _calculate_cost(self, input_tokens: int, output_tokens: int) -> float:
-        """Calculate cost for GPT-4o-mini"""
-        # GPT-4o-mini pricing (as of 2024)
-        input_cost_per_1m = 0.150  # $0.15 per 1M input tokens
-        output_cost_per_1m = 0.600  # $0.60 per 1M output tokens
+        """Calculate cost based on model"""
+        # Pricing per 1M tokens
+        pricing = {
+            "gpt-4o-mini": {"input": 0.150, "output": 0.600},
+            "gpt-4o": {"input": 2.50, "output": 10.00},
+            "gpt-5-nano": {"input": 0.025, "output": 0.20},
+            "gpt-5-mini": {"input": 0.125, "output": 1.00},
+            "gpt-5": {"input": 0.625, "output": 5.00},
+        }
 
-        input_cost = (input_tokens / 1_000_000) * input_cost_per_1m
-        output_cost = (output_tokens / 1_000_000) * output_cost_per_1m
+        # Default to gpt-4o-mini pricing if model not found
+        model_pricing = pricing.get(self.model, {"input": 0.150, "output": 0.600})
+
+        input_cost = (input_tokens / 1_000_000) * model_pricing["input"]
+        output_cost = (output_tokens / 1_000_000) * model_pricing["output"]
 
         return input_cost + output_cost
 
