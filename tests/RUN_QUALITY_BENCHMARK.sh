@@ -35,7 +35,14 @@ echo ""
 echo "Starting quality benchmark..."
 echo ""
 
-python tests/quality_benchmark.py \
+# Use python3 if python is not available
+if command -v python &> /dev/null; then
+    PYTHON_CMD=python
+else
+    PYTHON_CMD=python3
+fi
+
+$PYTHON_CMD tests/quality_benchmark.py \
     ${MODEL:+--model "$MODEL"} \
     ${QDRANT_CLOUD_URL:+--qdrant-url "$QDRANT_CLOUD_URL"} \
     ${QDRANT_API_KEY:+--qdrant-api-key "$QDRANT_API_KEY"}

@@ -33,13 +33,18 @@ class VLLMEngine:
         self.max_model_len = max_model_len
         
         # Initialize vLLM
+        # GPTQ requires float16, not bfloat16
+        import torch
+        dtype = torch.float16 if quantization in ["gptq", "awq"] else "auto"
+
         self.llm = LLM(
             model=model_name,
             quantization=quantization,
             gpu_memory_utilization=gpu_memory_utilization,
             max_model_len=max_model_len,
             tensor_parallel_size=tensor_parallel_size,
-            trust_remote_code=True
+            trust_remote_code=True,
+            dtype=dtype
         )
         
         print(f"✅ vLLM loaded: {model_name}")
