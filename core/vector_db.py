@@ -65,8 +65,9 @@ class QdrantAdapter:
             device='cuda'
         )
         self.model = self.dense_encoder  # Alias for compatibility
-        self.dense_size = 768
-        print("✅ Qwen3 loaded")
+        # Get actual embedding dimension from the model
+        self.dense_size = self.dense_encoder.get_sentence_embedding_dimension()
+        print(f"✅ Qwen3 loaded (dim: {self.dense_size})")
         
         # Load SPLADE for semantic sparse retrieval
         print("Loading SPLADE...")
