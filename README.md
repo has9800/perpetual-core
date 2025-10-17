@@ -1,6 +1,6 @@
-# Infinite Memory Inference API
+# Jet V2 - Infinite Memory API
 
-**Production-ready LLM inference with infinite conversation memory and 99.8% token savings**
+**Production-ready LLM inference with infinite conversation memory and ~78.9% token savings**
 
 [![Performance](https://img.shields.io/badge/throughput-131.9_tok%2Fs-brightgreen)]()
 [![Memory](https://img.shields.io/badge/savings-99.8%25-blue)]()

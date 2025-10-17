@@ -230,3 +230,103 @@ class MemoryManager:
             'cache_utilization': len(self.recent_cache) / self.cache_capacity,
             'errors': self.stats['errors']
         }
+    
+
+# """
+# Memory manager (refactored for cleaner interface)
+# """
+# from typing import Dict, List, Optional
+# import time
+
+
+# class MemoryManager:
+#     """
+#     Manages conversation memory with retrieval
+#     """
+    
+#     def __init__(
+#         self,
+#         vector_db,
+#         cache_capacity: int = 1000
+#     ):
+#         """
+#         Initialize memory manager
+        
+#         Args:
+#             vector_db: Vector database adapter
+#             cache_capacity: Max items in memory cache
+#         """
+#         self.vector_db = vector_db
+#         self.cache_capacity = cache_capacity
+        
+#         # Stats
+#         self.stats = {
+#             'total_retrievals': 0,
+#             'cache_hits': 0,
+#             'cache_misses': 0
+#         }
+    
+#     async def retrieve_context(
+#         self,
+#         conversation_id: str,
+#         query: str,
+#         top_k: int = 5
+#     ) -> Dict:
+#         """
+#         Retrieve relevant context from conversation history
+        
+#         Args:
+#             conversation_id: Conversation to search
+#             query: Query text
+#             top_k: Number of results
+            
+#         Returns:
+#             Dict with 'success', 'results' list, 'metadata'
+#         """
+#         try:
+#             self.stats['total_retrievals'] += 1
+            
+#             start_time = time.time()
+            
+#             # Query vector DB
+#             results = await self.vector_db.query(
+#                 conversation_id=conversation_id,
+#                 query_text=query,
+#                 top_k=top_k
+#             )
+            
+#             retrieval_time = (time.time() - start_time) * 1000
+            
+#             return {
+#                 'success': True,
+#                 'results': results,
+#                 'metadata': {
+#                     'retrieval_time_ms': round(retrieval_time, 2),
+#                     'total_found': len(results)
+#                 }
+#             }
+            
+#         except Exception as e:
+#             print(f"Memory retrieval error: {e}")
+#             return {
+#                 'success': False,
+#                 'results': [],
+#                 'metadata': {'error': str(e)}
+#             }
+    
+#     def add_memory(
+#         self,
+#         conversation_id: str,
+#         text: str,
+#         metadata: Optional[Dict] = None
+#     ) -> bool:
+#         """Add memory to vector database"""
+#         return self.vector_db.add(
+#             conversation_id=conversation_id,
+#             text=text,
+#             metadata=metadata
+#         )
+    
+#     def get_stats(self) -> Dict:
+#         """Get memory manager statistics"""
+#         return self.stats.copy()

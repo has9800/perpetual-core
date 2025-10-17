@@ -1,0 +1,41 @@
+# =============================================================================
+# PERPETUAL AI - PYTHON DEPENDENCIES
+# =============================================================================
+
+# Web Framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# LLM & Inference
+vllm==0.4.0
+torch==2.1.0
+transformers>=4.40.0
+
+# Embeddings & Retrieval
+sentence-transformers>=3.0.0
+splade-model>=0.1.0
+huggingface-hub>=0.23.0
+
+# Vector Database
+qdrant-client==1.7.0
+
+# Authentication & Database
+supabase==2.3.0
+httpx==0.25.2
+
+# Utilities
+python-dotenv==1.0.0
+tiktoken==0.5.2
+pyyaml==6.0.1
+
+# Monitoring
+prometheus-client==0.19.0
+
+# Development
+pytest==7.4.3
+pytest-asyncio==0.21.1
+black==23.12.0
+ruff==0.1.8

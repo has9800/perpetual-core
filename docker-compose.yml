@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  # Perpetual AI API
+  perpetual-ai:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - DEBUG=true
+      - QDRANT_CLOUD_URL=${QDRANT_CLOUD_URL}
+      - QDRANT_API_KEY=${QDRANT_API_KEY}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_KEY=${SUPABASE_KEY}
+      - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET}
+      - POLAR_API_KEY=${POLAR_API_KEY}
+      - POLAR_ORGANIZATION_ID=${POLAR_ORGANIZATION_ID}
+    volumes:
+      - ./data:/app/data
+      - huggingface_cache:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  huggingface_cache:
